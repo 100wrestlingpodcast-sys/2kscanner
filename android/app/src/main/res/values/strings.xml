@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">BSN 2K Scanner</string>
+    <string name="title_activity_main">BSN 2K Scanner</string>
+    <string name="package_name">com.bsn2k26.scanner</string>
+    <string name="custom_url_scheme">com.bsn2k26.scanner</string>
+</resources>

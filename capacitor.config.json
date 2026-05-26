@@ -1,0 +1,9 @@
+{
+  "appId": "com.bsn2k26.scanner",
+  "appName": "BSN 2K Scanner",
+  "webDir": "public",
+  "server": {
+    "url": "https://2kbsnscanner.netlify.app",
+    "cleartext": true
+  }
+}
