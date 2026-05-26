@@ -6,11 +6,20 @@ import { NeonButton } from "@/components/ui/NeonButton";
 import { DragDropZone } from "@/components/ui/DragDropZone";
 import { 
   Users, UploadCloud, Globe, Database, CheckCircle, 
-  Edit3, AlertCircle, LogOut, Loader2, Plus, Trash2, Key, HelpCircle, Trophy 
+  Edit3, AlertCircle, LogOut, Loader2, Plus, Trash2, Key, HelpCircle, Trophy, Bell
 } from "lucide-react";
 import Login from "@/components/Login";
-import { auth } from "@/lib/firebase";
+import { auth, db } from "@/lib/firebase";
 import { onAuthStateChanged, signOut, User } from "firebase/auth";
+import { 
+  collection, 
+  addDoc, 
+  onSnapshot, 
+  doc, 
+  deleteDoc, 
+  query, 
+  orderBy 
+} from "firebase/firestore";
 
 interface ValidPlayer {
   name: string;
@@ -113,6 +122,28 @@ export default function Home() {
   const [showUploadAuth, setShowUploadAuth] = useState(false);
   const [uploadKey, setUploadKey] = useState("");
   const [uploadKeyError, setUploadKeyError] = useState("");
+
+  const [pendingGames, setPendingGames] = useState<any[]>([]);
+  const [editingGameId, setEditingGameId] = useState<string | null>(null);
+  const [editingGameData, setEditingGameData] = useState<any[]>([]);
+  const [editingGameDestinations, setEditingGameDestinations] = useState({ scoreboard: true, individual: true });
+
+  useEffect(() => {
+    if (!user || captainProfile.role !== 'admin') return;
+
+    const q = query(collection(db, "pending_games"), orderBy("submittedAt", "desc"));
+    const unsubscribe = onSnapshot(q, (snapshot) => {
+      const games = snapshot.docs.map(doc => ({
+        id: doc.id,
+        ...doc.data()
+      }));
+      setPendingGames(games);
+    }, (err) => {
+      console.error("Error listening to pending games:", err);
+    });
+
+    return () => unsubscribe();
+  }, [user, captainProfile.role]);
 
   useEffect(() => {
     const fetchPlayers = async () => {
@@ -361,6 +392,50 @@ export default function Home() {
     setScannedData(prev => prev.filter(p => p.id !== id));
   };
 
+  const handleUploadToPendingFirestore = async () => {
+    setIsScanning(true);
+    try {
+      const teamPoints: Record<string, number> = {};
+      scannedData.forEach(p => {
+        teamPoints[p.team] = (teamPoints[p.team] || 0) + p.pts;
+      });
+
+      const teams = Object.keys(teamPoints);
+      let winningTeam = "";
+      if (teams.length >= 2) {
+        winningTeam = teamPoints[teams[0]] > teamPoints[teams[1]] ? teams[0] : teams[1];
+      } else if (teams.length === 1) {
+        winningTeam = teams[0];
+      }
+
+      const finalData = scannedData.map(p => {
+        const opponent = teams.find(t => t !== p.team) || "Desconocido";
+        const result = p.team === winningTeam ? "W" : "L";
+        return { ...p, opponent, result };
+      });
+
+      await addDoc(collection(db, "pending_games"), {
+        submittedBy: captainProfile.username || "Capitán",
+        submittedAt: new Date().toISOString(),
+        team: activeTeam,
+        data: finalData,
+        destinations: destinations
+      });
+
+      alert(lang === 'en' 
+        ? "Stats sent successfully! Awaiting league administrator review." 
+        : "¡Estadísticas enviadas con éxito! Quedaron en cola para revisión del Administrador de la Liga.");
+      
+      setIsReviewing(false);
+      setScannedData([]);
+    } catch (err: any) {
+      console.error("Firestore Upload Error: ", err);
+      alert(lang === 'en' ? "Error saving stats to review queue." : "Error al guardar las estadísticas en la cola de revisión.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
   const handleConfirm = async () => {
     if (scannedData.length === 0) {
       alert(lang === 'en' ? "Please add at least one player." : "Por favor añade al menos un jugador.");
@@ -373,10 +448,13 @@ export default function Home() {
       return;
     }
 
-    // Abrimos el modal de autorización para ingresar la clave bsn2k
-    setShowUploadAuth(true);
-    setUploadKey("");
-    setUploadKeyError("");
+    if (captainProfile.role === 'captain') {
+      await handleUploadToPendingFirestore();
+    } else {
+      setShowUploadAuth(true);
+      setUploadKey("");
+      setUploadKeyError("");
+    }
   };
 
   const handleExecuteUpload = async () => {
@@ -426,6 +504,128 @@ export default function Home() {
       }
     } else {
       setUploadKeyError(lang === 'en' ? "Invalid upload key." : "Clave de envío incorrecta.");
+    }
+  };
+
+  const handlePendingDataChange = (index: number, field: string, value: any) => {
+    setEditingGameData(prev => prev.map((p, idx) => {
+      if (idx === index) {
+        const updated = { 
+          ...p, 
+          [field]: field === 'username' || field === 'team' ? value : Number(value) 
+        };
+        const matchedPlayer = validPlayers.find(
+          (vp) => vp.name.trim().toLowerCase() === updated.username.trim().toLowerCase() && 
+                  vp.team.trim().toLowerCase() === updated.team.trim().toLowerCase()
+        );
+        updated.nameMatched = !!matchedPlayer;
+        return updated;
+      }
+      return p;
+    }));
+  };
+
+  const handleAddRowToPending = () => {
+    setEditingGameData(prev => [
+      ...prev,
+      {
+        id: String(Date.now()),
+        username: "",
+        team: editingGameData[0]?.team || validPlayers[0]?.team || "",
+        pts: 0,
+        reb: 0,
+        ast: 0,
+        stl: 0,
+        blk: 0,
+        fgm: 0,
+        tpm: 0,
+        nameMatched: false
+      }
+    ]);
+  };
+
+  const handleRemoveRowFromPending = (index: number) => {
+    setEditingGameData(prev => prev.filter((_, idx) => idx !== index));
+  };
+
+  const handleApprovePendingGame = async (gameId: string) => {
+    if (editingGameData.length === 0) {
+      alert(lang === 'en' ? "Please add at least one player." : "Por favor añade al menos un jugador.");
+      return;
+    }
+
+    const hasErrors = editingGameData.some(p => !p.nameMatched);
+    if (hasErrors) {
+      alert(lang === 'en' ? "Please correct unmatched names before approving." : "Por favor corrige los nombres no encontrados antes de aprobar.");
+      return;
+    }
+
+    if (!confirm(lang === 'en' ? "Are you sure you want to approve and register this game?" : "¿Estás seguro de que deseas aprobar y registrar este partido en Google Sheets?")) {
+      return;
+    }
+
+    setIsScanning(true);
+    try {
+      const teamPoints: Record<string, number> = {};
+      editingGameData.forEach(p => {
+        teamPoints[p.team] = (teamPoints[p.team] || 0) + p.pts;
+      });
+
+      const teams = Object.keys(teamPoints);
+      let winningTeam = "";
+      if (teams.length >= 2) {
+        winningTeam = teamPoints[teams[0]] > teamPoints[teams[1]] ? teams[0] : teams[1];
+      } else if (teams.length === 1) {
+        winningTeam = teams[0];
+      }
+
+      const finalData = editingGameData.map(p => {
+        const opponent = teams.find(t => t !== p.team) || "Desconocido";
+        const result = p.team === winningTeam ? "W" : "L";
+        return { ...p, opponent, result };
+      });
+
+      const res = await fetch("/api/sheets", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ data: finalData, destinations: editingGameDestinations })
+      });
+      const resData = await res.json();
+
+      if (resData.success) {
+        await deleteDoc(doc(db, "pending_games", gameId));
+        alert(lang === 'en' ? "Game approved and registered successfully!" : "¡Partido aprobado y registrado exitosamente en Google Sheets!");
+        setEditingGameId(null);
+        setEditingGameData([]);
+      } else {
+        alert("Error de Google Sheets: " + resData.error);
+      }
+    } catch (err: any) {
+      console.error("Approval Error:", err);
+      alert(lang === 'en' ? "Network or database error during approval." : "Error de red o base de datos durante la aprobación.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleRejectPendingGame = async (gameId: string) => {
+    if (!confirm(lang === 'en' ? "Are you sure you want to REJECT and delete this game? This action cannot be undone." : "¿Estás seguro de que deseas RECHAZAR y eliminar este partido? Esta acción no se puede deshacer y los datos se perderán.")) {
+      return;
+    }
+
+    setIsScanning(true);
+    try {
+      await deleteDoc(doc(db, "pending_games", gameId));
+      alert(lang === 'en' ? "Game rejected and deleted." : "Partido rechazado y eliminado con éxito.");
+      if (editingGameId === gameId) {
+        setEditingGameId(null);
+        setEditingGameData([]);
+      }
+    } catch (err: any) {
+      console.error("Rejection Error:", err);
+      alert(lang === 'en' ? "Error deleting pending game." : "Error al eliminar el partido pendiente.");
+    } finally {
+      setIsScanning(false);
     }
   };
 
@@ -856,6 +1056,299 @@ export default function Home() {
         
         {/* Panel Izquierdo: Creador/Escáner de Estadísticas */}
         <div className="lg:col-span-2 space-y-8">
+          
+          {/* COLA DE APROBACIONES PENDIENTES (Solo para Administradores de la Liga) */}
+          {captainProfile.role === 'admin' && (
+            <GlassCard glowColor={pendingGames.length > 0 ? "neon" : "none"} className="p-6 border border-white/5 relative overflow-hidden">
+              <div className="flex justify-between items-center mb-6">
+                <div className="flex items-center space-x-3">
+                  <Bell className={`w-6 h-6 ${pendingGames.length > 0 ? 'text-yellow-500 animate-bounce' : 'text-gray-400'}`} />
+                  <h2 className="text-xl font-black uppercase tracking-wide">
+                    {lang === 'en' ? "Pending Approvals" : "Aprobaciones Pendientes"}
+                  </h2>
+                </div>
+                {pendingGames.length > 0 && (
+                  <span className="px-3 py-1 bg-yellow-500/15 border border-yellow-500/30 text-yellow-500 text-[10px] font-black uppercase rounded-full animate-pulse">
+                    {pendingGames.length} {lang === 'en' ? "Awaiting" : "En Espera"}
+                  </span>
+                )}
+              </div>
+
+              {pendingGames.length === 0 ? (
+                <div className="p-6 bg-white/5 border border-white/5 rounded-xl text-center">
+                  <CheckCircle className="w-8 h-8 text-bsn-neon mx-auto mb-2 opacity-50" />
+                  <p className="text-sm font-bold text-gray-400">
+                    {lang === 'en' ? "All caught up! No pending approvals." : "¡Al día! No hay partidos pendientes de aprobación."}
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-4">
+                  {pendingGames.map((game) => {
+                    const isEditingThisGame = editingGameId === game.id;
+                    const gameTheme = getTeamTheme(game.team);
+                    
+                    return (
+                      <div 
+                        key={game.id} 
+                        className="bg-black/45 border border-white/5 rounded-2xl overflow-hidden transition-all duration-300 hover:border-white/10"
+                        style={{ borderLeft: `4px solid ${gameTheme.primary}` }}
+                      >
+                        {/* Cabecera del juego pendiente */}
+                        <div className="p-4 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+                          <div className="flex items-center gap-3">
+                            <div className="w-12 h-12 bg-black/40 border border-white/10 rounded-xl p-1.5 flex items-center justify-center shrink-0">
+                              <img 
+                                src={`/${gameTheme.logo}`} 
+                                alt={game.team} 
+                                className="w-full h-full object-contain"
+                                onError={(e) => { (e.target as any).src = "/bsn_logo.png"; }}
+                              />
+                            </div>
+                            <div>
+                              <h3 className="font-black text-sm uppercase text-white tracking-tight">
+                                {game.team} {game.data[0]?.opponent ? `vs ${game.data[0].opponent}` : ""}
+                              </h3>
+                              <p className="text-[10px] text-gray-400 font-bold uppercase">
+                                {lang === 'en' ? "Submitted by: " : "Subido por: "}<span className="text-bsn-neon font-black">{game.submittedBy}</span>
+                              </p>
+                              <p className="text-[8px] text-gray-500 font-bold mt-0.5">
+                                {new Date(game.submittedAt).toLocaleString("es-PR")}
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex items-center gap-3 w-full md:w-auto justify-end">
+                            <button 
+                              onClick={() => {
+                                if (isEditingThisGame) {
+                                  setEditingGameId(null);
+                                  setEditingGameData([]);
+                                } else {
+                                  setEditingGameId(game.id);
+                                  setEditingGameData(game.data);
+                                  setEditingGameDestinations(game.destinations || { scoreboard: true, individual: true });
+                                }
+                              }}
+                              className="px-4 py-2 border border-white/10 hover:border-bsn-neon bg-white/5 hover:bg-bsn-neon/5 rounded-lg text-xs font-black uppercase tracking-wider transition-all"
+                            >
+                              {isEditingThisGame ? (lang === 'en' ? "Collapse" : "Contraer") : (lang === 'en' ? "Review & Edit" : "Revisar y Editar")}
+                            </button>
+                            <button 
+                              onClick={() => handleRejectPendingGame(game.id)}
+                              className="px-4 py-2 bg-red-600/10 hover:bg-red-600/20 text-red-500 border border-red-500/20 rounded-lg text-xs font-black uppercase tracking-wider transition-all"
+                            >
+                              {lang === 'en' ? "Reject" : "Rechazar"}
+                            </button>
+                          </div>
+                        </div>
+
+                        {/* Editor del juego expandido */}
+                        {isEditingThisGame && (
+                          <div className="border-t border-white/5 bg-black/30 p-4 space-y-4">
+                            <div className="flex flex-wrap gap-4 items-center justify-between p-3.5 bg-black/40 border border-white/5 rounded-xl">
+                              <span className="text-xs font-black text-gray-400 uppercase">{lang === 'en' ? "Select Destinations:" : "Destinos del Registro:"}</span>
+                              <div className="flex gap-4">
+                                <label className="flex items-center space-x-2 cursor-pointer select-none">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={editingGameDestinations.scoreboard} 
+                                    onChange={() => setEditingGameDestinations(prev => ({ ...prev, scoreboard: !prev.scoreboard }))}
+                                    className="w-4 h-4 accent-bsn-neon bg-black border border-white/20 rounded"
+                                  />
+                                  <span className="text-xs font-bold text-gray-300">Scoreboard</span>
+                                </label>
+                                <label className="flex items-center space-x-2 cursor-pointer select-none">
+                                  <input 
+                                    type="checkbox" 
+                                    checked={editingGameDestinations.individual} 
+                                    onChange={() => setEditingGameDestinations(prev => ({ ...prev, individual: !prev.individual }))}
+                                    className="w-4 h-4 accent-bsn-neon bg-black border border-white/20 rounded"
+                                  />
+                                  <span className="text-xs font-bold text-gray-300">{lang === 'en' ? 'Players list' : 'Lista Jugadores'}</span>
+                                </label>
+                              </div>
+                            </div>
+
+                            <div className="overflow-x-auto border border-white/10 rounded-xl bg-black/30 backdrop-blur-md">
+                              <table className="w-full text-left min-w-[650px] border-collapse">
+                                <thead>
+                                  <tr className="bg-black/50 border-b border-white/10 text-bsn-neon uppercase text-[9px] font-black tracking-wider">
+                                    <th className="p-3">Equipo</th>
+                                    <th className="p-3">Jugador / Username</th>
+                                    <th className="p-3 text-center w-14">PTS</th>
+                                    <th className="p-3 text-center w-14">REB</th>
+                                    <th className="p-3 text-center w-14">AST</th>
+                                    <th className="p-3 text-center w-14">STL</th>
+                                    <th className="p-3 text-center w-14">BLK</th>
+                                    {editingGameDestinations.scoreboard && (
+                                      <>
+                                        <th className="p-3 text-center w-14">FGM</th>
+                                        <th className="p-3 text-center w-14">3PM</th>
+                                      </>
+                                    )}
+                                    <th className="p-3 text-center w-10">Acción</th>
+                                  </tr>
+                                </thead>
+                                <tbody className="divide-y divide-white/5">
+                                  {editingGameData.map((player, idx) => {
+                                    const isRowMatched = player.nameMatched;
+                                    const teamRoster = validPlayers.filter(vp => vp.team.toLowerCase().trim() === player.team.toLowerCase().trim());
+                                    
+                                    return (
+                                      <tr 
+                                        key={idx} 
+                                        className={`transition-colors duration-200 ${!isRowMatched ? 'bg-red-500/5 hover:bg-red-500/10' : 'hover:bg-white/5'}`}
+                                      >
+                                        <td className="p-2">
+                                          <select 
+                                            value={player.team} 
+                                            onChange={(e) => handlePendingDataChange(idx, 'team', e.target.value)}
+                                            className="bg-black border border-white/15 text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-32"
+                                          >
+                                            {uniqueTeams.map(t => (
+                                              <option key={t} value={t}>{t}</option>
+                                            ))}
+                                          </select>
+                                        </td>
+
+                                        <td className="p-2">
+                                          <div className="flex flex-col gap-1">
+                                            <select 
+                                              value={player.username} 
+                                              onChange={(e) => handlePendingDataChange(idx, 'username', e.target.value)}
+                                              className={`bg-black border text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-40 ${!isRowMatched ? 'border-red-500/40 text-red-400' : 'border-white/15'}`}
+                                            >
+                                              <option value="">-- Selecciona Jugador --</option>
+                                              {teamRoster.map(vp => (
+                                                <option key={vp.name} value={vp.name}>{vp.name}</option>
+                                              ))}
+                                            </select>
+                                            {!isRowMatched && (
+                                              <span className="text-[8px] font-black text-red-500 flex items-center gap-0.5 mt-0.5">
+                                                <AlertCircle className="w-2.5 h-2.5" />
+                                                {t[lang].unmatchedError}
+                                              </span>
+                                            )}
+                                          </div>
+                                        </td>
+
+                                        <td className="p-2">
+                                          <input 
+                                            type="number" 
+                                            value={player.pts} 
+                                            onChange={(e) => handlePendingDataChange(idx, 'pts', e.target.value)}
+                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            min="0"
+                                          />
+                                        </td>
+                                        <td className="p-2">
+                                          <input 
+                                            type="number" 
+                                            value={player.reb} 
+                                            onChange={(e) => handlePendingDataChange(idx, 'reb', e.target.value)}
+                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            min="0"
+                                          />
+                                        </td>
+                                        <td className="p-2">
+                                          <input 
+                                            type="number" 
+                                            value={player.ast} 
+                                            onChange={(e) => handlePendingDataChange(idx, 'ast', e.target.value)}
+                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            min="0"
+                                          />
+                                        </td>
+                                        <td className="p-2">
+                                          <input 
+                                            type="number" 
+                                            value={player.stl} 
+                                            onChange={(e) => handlePendingDataChange(idx, 'stl', e.target.value)}
+                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            min="0"
+                                          />
+                                        </td>
+                                        <td className="p-2">
+                                          <input 
+                                            type="number" 
+                                            value={player.blk} 
+                                            onChange={(e) => handlePendingDataChange(idx, 'blk', e.target.value)}
+                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            min="0"
+                                          />
+                                        </td>
+                                        {editingGameDestinations.scoreboard && (
+                                          <>
+                                            <td className="p-2">
+                                              <input 
+                                                type="number" 
+                                                value={player.fgm} 
+                                                onChange={(e) => handlePendingDataChange(idx, 'fgm', e.target.value)}
+                                                className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                                min="0"
+                                              />
+                                            </td>
+                                            <td className="p-2">
+                                              <input 
+                                                type="number" 
+                                                value={player.tpm} 
+                                                onChange={(e) => handlePendingDataChange(idx, 'tpm', e.target.value)}
+                                                className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                                min="0"
+                                              />
+                                            </td>
+                                          </>
+                                        )}
+                                        
+                                        <td className="p-2 text-center">
+                                          <button 
+                                            onClick={() => handleRemoveRowFromPending(idx)}
+                                            className="p-1.5 text-red-400 hover:text-red-500 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors"
+                                          >
+                                            <Trash2 className="w-3.5 h-3.5" />
+                                          </button>
+                                        </td>
+                                      </tr>
+                                    );
+                                  })}
+                                </tbody>
+                              </table>
+                            </div>
+
+                            <div className="flex flex-col sm:flex-row justify-between items-center gap-4">
+                              <button 
+                                onClick={handleAddRowToPending}
+                                className="flex items-center gap-1.5 px-3 py-1.5 border border-white/10 hover:border-bsn-neon hover:bg-bsn-neon/5 rounded-lg text-[10px] font-black uppercase tracking-wider transition-colors w-full sm:w-auto justify-center"
+                              >
+                                <Plus className="w-3.5 h-3.5 text-bsn-neon" />
+                                <span>{t[lang].addPlayer}</span>
+                              </button>
+
+                              <div className="flex gap-3 w-full sm:w-auto justify-end">
+                                <button 
+                                  onClick={() => { setEditingGameId(null); setEditingGameData([]); }} 
+                                  className="px-4 py-2 border border-white/10 text-gray-400 hover:text-white rounded-lg text-xs font-black uppercase tracking-wider transition-colors"
+                                >
+                                  {lang === 'en' ? "Cancel" : "Cancelar"}
+                                </button>
+                                <button 
+                                  onClick={() => handleApprovePendingGame(game.id)}
+                                  className="px-5 py-2 bg-gradient-to-r from-bsn-neon to-bsn-blue hover:opacity-90 text-black font-black uppercase text-xs rounded-lg tracking-wider transition-all shadow-[0_0_15px_rgba(56,189,248,0.3)]"
+                                >
+                                  {lang === 'en' ? "Approve & Submit" : "Confirmar y Aprobar"}
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </GlassCard>
+          )}
+
           <GlassCard glowColor={isReviewing ? "none" : "neon"} className="p-8 border border-white/5 relative overflow-hidden">
             
             {/* Banner de Advertencia de IA / AI Disclaimer */}
