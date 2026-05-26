@@ -191,23 +191,20 @@ export default function Home() {
       : (isExperienceMode ? simulatedTeam : "");
 
     const activeTheme = getTeamTheme(activeTeam);
-    document.body.style.backgroundColor = '#030307';
+    document.body.style.backgroundColor = '#06060A';
     if (activeTeam) {
       document.body.style.backgroundImage = `
-        linear-gradient(to bottom, rgba(3, 3, 7, 0.65), rgba(3, 3, 7, 0.92)),
-        radial-gradient(circle at 50% 40%, ${activeTheme.primary}cc, transparent 80%),
-        radial-gradient(circle at 85% 20%, ${activeTheme.primary}30, transparent 55%),
-        radial-gradient(circle at 15% 80%, ${activeTheme.secondary || activeTheme.primary}20, transparent 55%),
-        url('/bg_urban.png')
+        radial-gradient(circle at 50% 35%, ${activeTheme.primary}16, transparent 65%),
+        radial-gradient(circle at 85% 20%, ${activeTheme.primary}08, transparent 45%),
+        radial-gradient(circle at 15% 80%, ${activeTheme.secondary || activeTheme.primary}06, transparent 45%)
       `;
-      document.body.style.backgroundBlendMode = 'normal, normal, normal, normal, overlay';
+      document.body.style.backgroundBlendMode = 'normal, normal, normal';
     } else {
       document.body.style.backgroundImage = `
-        radial-gradient(circle at 85% 15%, ${activeTheme.primary}20, transparent 55%),
-        radial-gradient(circle at 15% 85%, ${activeTheme.secondary}10, transparent 55%),
-        url('/bg_urban.png')
+        radial-gradient(circle at 80% 20%, ${activeTheme.primary}08, transparent 45%),
+        radial-gradient(circle at 20% 80%, ${activeTheme.secondary}04, transparent 45%)
       `;
-      document.body.style.backgroundBlendMode = 'normal';
+      document.body.style.backgroundBlendMode = 'normal, normal';
     }
     document.body.style.backgroundSize = 'cover';
     document.body.style.backgroundAttachment = 'fixed';
