@@ -144,27 +144,60 @@ export async function POST(req: NextRequest) {
 
     // 1. SCOREBOARD -> Añadir nueva fila en GAME_PLAYER_STATS
     if (scoreboard) {
-      const rowsToAppend = data.map((p: any) => [
-        finalGameId,
-        dateStr,
-        p.team, // Equipo local
-        p.opponent || "", // Equipo visita
-        p.username,
-        p.pts || 0,
-        p.ast || 0,
-        p.reb || 0,
-        p.stl || 0,
-        p.blk || 0,
-        p.fgm || 0,
-        "", // FG_ATTEMPTED
-        p.tpm || 0, // THREE_MADE
-        p.result || "", // RESULT (W/L)
-        "TRUE" // DID_PLAY
-      ]);
+      // Inicialización dinámica y autocuración de cabeceras en GAME_PLAYER_STATS
+      try {
+        const headerRes = await sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "GAME_PLAYER_STATS!A1:R1",
+        });
+        const headers = headerRes.data.values ? headerRes.data.values[0] : [];
+        const expectedHeaders = [
+          "Game ID", "Date", "Equipos", "Equipos", "Player", "PTS", "AST", "REB",
+          "STL", "BLK", "FG_MADE", "FG_ATTEMPTED", "THREE_MADE", "RESULT", "DID_PLAY",
+          "THREE_ATTEMPTED", "TURNOVERS", "FOULS"
+        ];
+        
+        if (headers.length < 18 || !headers[11] || headers[11] !== "FG_ATTEMPTED" || headers[15] !== "THREE_ATTEMPTED") {
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: "GAME_PLAYER_STATS!A1:R1",
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+              values: [expectedHeaders]
+            }
+          });
+        }
+      } catch (err) {
+        console.warn("No se pudo verificar o actualizar las cabeceras de GAME_PLAYER_STATS:", err);
+      }
+
+      const rowsToAppend = data.map((p: any) => {
+        const numVal = (v: any) => (v === "" || v === null || v === undefined) ? 0 : Number(v);
+        return [
+          finalGameId,
+          dateStr,
+          p.team, // Equipo local
+          p.opponent || "", // Equipo visita
+          p.username,
+          numVal(p.pts),
+          numVal(p.ast),
+          numVal(p.reb),
+          numVal(p.stl),
+          numVal(p.blk),
+          numVal(p.fgm),
+          numVal(p.fga), // FG_ATTEMPTED
+          numVal(p.tpm), // THREE_MADE
+          p.result || "", // RESULT (W/L)
+          "TRUE", // DID_PLAY
+          numVal(p.tpa), // THREE_ATTEMPTED
+          numVal(p.to), // TURNOVERS
+          numVal(p.fouls) // FOULS
+        ];
+      });
 
       await sheets.spreadsheets.values.append({
         spreadsheetId: SPREADSHEET_ID,
-        range: "GAME_PLAYER_STATS!A:O",
+        range: "GAME_PLAYER_STATS!A:R",
         valueInputOption: "USER_ENTERED",
         requestBody: {
           values: rowsToAppend

@@ -10,7 +10,7 @@ export const maxDuration = 60; // Allow more time for Vision API
 
 export async function POST(req: NextRequest) {
   try {
-    const { imageBase64 } = await req.json();
+    const { imageBase64, rosterPlayers, teams } = await req.json();
 
     if (!imageBase64) {
       return NextResponse.json(
@@ -19,39 +19,80 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    // Save image for debugging purposes
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const buffer = Buffer.from(imageBase64, 'base64');
+      fs.writeFileSync(path.join(process.cwd(), 'public', 'cropped_debug.jpg'), buffer);
+    } catch (e) {
+      console.warn("Could not save debug image:", e);
+    }
+
+    let rosterContext = "";
+    if (rosterPlayers && Array.isArray(rosterPlayers) && rosterPlayers.length > 0) {
+      rosterContext = `\n\nEXPECTED ROSTER PLAYERS (For Reference & High Precision Matching):\n` +
+        rosterPlayers.map((p: any) => `- Username: "${p.name}" (Expected Team: "${p.team}")`).join("\n") +
+        `\n\nUse this expected roster list to resolve and correct any slight spelling mistakes, special characters (like underscores, dashes), or OCR noise in the Player column. If a player row in the box score matches one of these expected usernames, map it to that username. If a player in the box score is NOT in this roster list, still extract and transcribe it exactly as it appears in the image (do not ignore them).`;
+    }
+
+    let teamsContext = "";
+    if (teams && Array.isArray(teams) && teams.length > 0) {
+      teamsContext = `\n\nEXPECTED TEAMS:\n` +
+        teams.map((t: any) => `- "${t}"`).join("\n") +
+        `\n\nAssign each transcribed player to one of these expected teams based on which section/header of the box score they belong to.`;
+    }
+
     const response = await openai.chat.completions.create({
       model: "gpt-4o",
       messages: [
         {
           role: "system",
-          content: `You are an expert OCR AI tailored for NBA 2K Pro-Am Box Scores.
-Your job is to read the attached screenshot of the box score and extract the stats for ALL players.
-You MUST output ONLY a raw JSON array of objects, with no markdown formatting (\`\`\`json) and no extra text.
+          content: `You are an advanced Spatial Vision OCR AI specialized in basketball box scores from NBA 2K.
+Your objective is to read the attached scoreboard image and transcribe statistics for every player row with absolute columns alignment.
 
-Rules:
-1. Detect the "Team" for each player. Usually, the scoreboard is split into two teams (e.g., Home/Away, Top/Bottom, Left/Right). Use team names if visible, otherwise use "Equipo 1" and "Equipo 2".
-2. Extract the exact PlayStation/Xbox username. Pay strict attention to spelling, capitalization, underscores, and numbers.
-3. Extract the following stats precisely:
-   - PTS (Points)
-   - REB (Rebounds)
-   - AST (Assists)
-   - STL (Steals)
-   - BLK (Blocks)
-   - FGM (Field Goals Made - usually the first number in the FG ratio like '12/20' -> 12)
-   - 3PM (3-Pointers Made - usually the first number in the 3PT ratio like '5/8' -> 5)
+CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
+1. Locate the Column Header Row:
+   Identify the horizontal row containing column headers. Look specifically for columns: PLAYER (or Player/Username), PTS, REB, AST, STL, BLK, FGM/FGA (or FG M/A), and 3PM/3PA (or 3P M/A).
+   
+2. Establish Exact Horizontal Coordinates (X-axis Calibration):
+   Determine the exact horizontal coordinate (or center line) of each of these headers:
+   - PLAYER
+   - PTS
+   - REB
+   - AST
+   - STL
+   - BLK
+   - FGM/FGA
+   - 3PM/3PA
 
-Output format required:
+3. Read Stats Vertically (Y-axis Lineup Scan):
+   For every player row in the scoreboard:
+   - Extract the Playstation/Xbox gamer ID in the Player/Username column.
+   - For each statistic (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA), look directly vertically downwards from that header's X-axis position. Extract ONLY the number or fraction that falls directly inside that column's vertical alignment slice.
+   - **PREFER EMPTY OVER GUESSING / SHIFTING**: If a cell under a header is blank, unreadable, or missing, do NOT shift numbers from adjacent columns to fill the gap. Set that field to null.
+   - If there is any doubt about which column a number belongs to, set it to null and set the flag "low_confidence": true for that player.
+   - Completely ignore and discard all other columns like GRD, FOULS, TO, FTM/FTA, team total rows, score overlays, and background details.
+
+4. Identify Teams:
+   Assign each player to their correct team name based on the team header above their table section.
+
+${rosterContext}${teamsContext}
+
+Output MUST be ONLY a raw JSON array of objects, with no markdown formatting (\`\`\`json) and no extra text.
+JSON Structure per Player:
 [
   {
     "username": "PlayerName",
     "team": "TeamName",
-    "pts": 20,
-    "reb": 5,
-    "ast": 10,
-    "stl": 2,
-    "blk": 1,
-    "fgm": 8,
-    "tpm": 4
+    "pts": 14 (or null),
+    "reb": 0 (or null),
+    "ast": 13 (or null),
+    "stl": 1 (or null),
+    "blk": 0 (or null),
+    "fgm_fga": "7/14" (or null),
+    "tpm_tpa": "0/2" (or null),
+    "low_confidence": false (or true if any value was doubtful, blurry, or misaligned)
   }
 ]`,
         },
@@ -60,7 +101,7 @@ Output format required:
           content: [
             {
               type: "text",
-              text: "Extract the stats from this NBA 2K Pro-Am scoreboard.",
+              text: "Find the headers first to calibrate X positions, then transcribe stats vertically for each player row.",
             },
             {
               type: "image_url",
@@ -72,7 +113,7 @@ Output format required:
           ],
         },
       ],
-      temperature: 0.1,
+      temperature: 0.0,
     });
 
     const aiContent = response.choices[0]?.message?.content;
@@ -86,7 +127,56 @@ Output format required:
     
     const parsedData = JSON.parse(cleanJson);
 
-    return NextResponse.json({ success: true, data: parsedData });
+    // Process the raw transcribed columns programmatically in the backend
+    const processedData = parsedData.map((player: any) => {
+      // Split FGM/FGA (e.g. "7/14" or "7-14")
+      let fgm: number | "" = "";
+      let fga: number | "" = "";
+      if (player.fgm_fga) {
+        const parts = String(player.fgm_fga).split(/[/\-]/);
+        fgm = parseInt(parts[0], 10);
+        if (isNaN(fgm)) fgm = "";
+        fga = parseInt(parts[1], 10);
+        if (isNaN(fga)) fga = "";
+      }
+      
+      // Split 3PM/3PA (e.g. "3/6" or "3-6")
+      let tpm: number | "" = "";
+      let tpa: number | "" = "";
+      if (player.tpm_tpa) {
+        const parts = String(player.tpm_tpa).split(/[/\-]/);
+        tpm = parseInt(parts[0], 10);
+        if (isNaN(tpm)) tpm = "";
+        tpa = parseInt(parts[1], 10);
+        if (isNaN(tpa)) tpa = "";
+      }
+
+      // Convert all numeric values safely
+      const parseVal = (val: any) => {
+        if (val === null || val === undefined || val === "") return "";
+        const parsed = parseInt(String(val), 10);
+        return isNaN(parsed) ? "" : parsed;
+      };
+
+      return {
+        username: player.username || "",
+        team: player.team || "",
+        pts: parseVal(player.pts),
+        reb: parseVal(player.reb),
+        ast: parseVal(player.ast),
+        stl: parseVal(player.stl),
+        blk: parseVal(player.blk),
+        to: "", // Deprecated/ignored, kept empty for schema compatibility
+        fouls: "", // Deprecated/ignored, kept empty for schema compatibility
+        fgm,
+        fga,
+        tpm,
+        tpa,
+        low_confidence: player.low_confidence === true
+      };
+    });
+
+    return NextResponse.json({ success: true, data: processedData });
   } catch (error: any) {
     console.error("OCR API Error:", error);
     return NextResponse.json(

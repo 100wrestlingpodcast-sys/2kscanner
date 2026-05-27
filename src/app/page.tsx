@@ -4,6 +4,8 @@ import React, { useState, useEffect } from "react";
 import { GlassCard } from "@/components/ui/GlassCard";
 import { NeonButton } from "@/components/ui/NeonButton";
 import { DragDropZone } from "@/components/ui/DragDropZone";
+import { CropTool } from "@/components/ui/CropTool";
+import { HDInteractiveViewer } from "@/components/ui/HDInteractiveViewer";
 import { 
   Users, UploadCloud, Globe, Database, CheckCircle, 
   Edit3, AlertCircle, LogOut, Loader2, Plus, Trash2, Key, HelpCircle, Trophy, Bell
@@ -42,14 +44,19 @@ interface ScannedPlayer {
   id: string;
   username: string;
   team: string;
-  pts: number;
-  reb: number;
-  ast: number;
-  stl: number;
-  blk: number;
-  fgm: number;
-  tpm: number;
+  pts: number | "";
+  reb: number | "";
+  ast: number | "";
+  stl: number | "";
+  blk: number | "";
+  to: number | "";
+  fouls: number | "";
+  fgm: number | "";
+  fga: number | "";
+  tpm: number | "";
+  tpa: number | "";
   nameMatched: boolean;
+  lowConfidence?: boolean;
 }
 
 interface CaptainProfile {
@@ -100,6 +107,9 @@ export default function Home() {
   const [isReviewing, setIsReviewing] = useState(false);
   const [scannedData, setScannedData] = useState<ScannedPlayer[]>([]);
   const [validPlayers, setValidPlayers] = useState<ValidPlayer[]>([]);
+  const [cropImageSrc, setCropImageSrc] = useState<string | null>(null);
+  const [croppedPreviewSrc, setCroppedPreviewSrc] = useState<string | null>(null);
+  const [manualEdits, setManualEdits] = useState<Record<string, Record<string, boolean>>>({});
 
   // Perfil del Capitán / Administrador
   const [captainProfile, setCaptainProfile] = useState<CaptainProfile>({
@@ -128,8 +138,10 @@ export default function Home() {
   const [editingGameData, setEditingGameData] = useState<any[]>([]);
   const [editingGameDestinations, setEditingGameDestinations] = useState({ scoreboard: true, individual: true });
 
+  const [isProfileLoaded, setIsProfileLoaded] = useState(false);
+
   useEffect(() => {
-    if (!user || captainProfile.role !== 'admin') return;
+    if (!user || !isProfileLoaded || captainProfile.role !== 'admin') return;
 
     const q = query(collection(db, "pending_games"), orderBy("submittedAt", "desc"));
     const unsubscribe = onSnapshot(q, (snapshot) => {
@@ -139,11 +151,11 @@ export default function Home() {
       }));
       setPendingGames(games);
     }, (err) => {
-      console.error("Error listening to pending games:", err);
+      console.warn("No se pudo escuchar la cola de partidos pendientes (permisos insuficientes):", err);
     });
 
     return () => unsubscribe();
-  }, [user, captainProfile.role]);
+  }, [user, isProfileLoaded, captainProfile.role]);
 
   useEffect(() => {
     const fetchPlayers = async () => {
@@ -161,9 +173,48 @@ export default function Home() {
   }, []);
 
   useEffect(() => {
-    const unsubscribe = onAuthStateChanged(auth, (currentUser) => {
+    const unsubscribe = onAuthStateChanged(auth, async (currentUser) => {
       setUser(currentUser);
-      setAuthLoading(false);
+      if (currentUser) {
+        setAuthLoading(true);
+        setIsProfileLoaded(false);
+        try {
+          const { doc, getDoc } = await import("firebase/firestore");
+          const userDocRef = doc(db, "users", currentUser.uid);
+          const userDoc = await getDoc(userDocRef);
+          
+          if (userDoc.exists()) {
+            const profileData = userDoc.data();
+            const loadedProfile: CaptainProfile = {
+              role: profileData.role || "",
+              authorized: profileData.role === "admin" ? true : !!profileData.uid,
+              team: profileData.team || "",
+              username: profileData.role === "captain" ? profileData.playerName : (profileData.username || ""),
+              activeView: profileData.role === "admin" ? "admin" : "experience"
+            };
+            setCaptainProfile(loadedProfile);
+            localStorage.setItem("bsn_captain_profile", JSON.stringify(loadedProfile));
+            if (profileData.role === "admin" && profileData.team) {
+              setSimulatedTeam(profileData.team);
+            }
+          } else {
+            // Fallback al localStorage si no hay documento en Firestore
+            const saved = localStorage.getItem("bsn_captain_profile");
+            if (saved) {
+              const parsed = JSON.parse(saved);
+              setCaptainProfile(parsed);
+            }
+          }
+        } catch (e) {
+          console.error("Error al cargar el perfil de Firestore:", e);
+        } finally {
+          setIsProfileLoaded(true);
+          setAuthLoading(false);
+        }
+      } else {
+        setIsProfileLoaded(true);
+        setAuthLoading(false);
+      }
     });
     return () => unsubscribe();
   }, []);
@@ -287,59 +338,157 @@ export default function Home() {
     localStorage.setItem("bsn_captain_profile", JSON.stringify(updated));
   };
 
+  const findClosestTeam = (rawTeam: string, teamsList: string[]): string => {
+    if (!rawTeam) return "";
+    const normalizedRaw = rawTeam.toLowerCase().trim();
+    
+    // 1. Coincidencia exacta
+    const exact = teamsList.find(t => t.toLowerCase().trim() === normalizedRaw);
+    if (exact) return exact;
+    
+    // 2. Coincidencia de subcadena (ej: "Criollos" en "CriollosDeCaguas")
+    const contained = teamsList.find(t => 
+      normalizedRaw.includes(t.toLowerCase().trim()) || 
+      t.toLowerCase().trim().includes(normalizedRaw)
+    );
+    if (contained) return contained;
+    
+    // 3. Mapeo de municipios comunes del BSN
+    const keyMap: Record<string, string> = {
+      "caguas": "Criollos",
+      "santurce": "Cangrejeros",
+      "bayamon": "Vaqueros",
+      "ponce": "Leones",
+      "mayaguez": "Indios",
+      "german": "Atléticos",
+      "quebradillas": "Piratas",
+      "manati": "Osos",
+      "coamo": "Maratonistas",
+      "fajardo": "Cariduros",
+      "guaynabo": "Mets",
+      "carolina": "Gigantes"
+    };
+    
+    for (const [key, val] of Object.entries(keyMap)) {
+      if (normalizedRaw.includes(key)) {
+        const match = teamsList.find(t => 
+          t.toLowerCase().includes(val.toLowerCase()) || 
+          val.toLowerCase().includes(t.toLowerCase())
+        );
+        if (match) return match;
+      }
+    }
+    
+    return "";
+  };
+
+  const findClosestPlayer = (rawUsername: string, rawTeam: string, playersList: ValidPlayer[]) => {
+    if (!rawUsername) return undefined;
+    const normRawUser = rawUsername.toLowerCase().replace(/[^a-z0-9]/g, "");
+    const normRawTeam = rawTeam.toLowerCase().trim();
+    
+    // Buscar primero dentro del equipo detectado
+    const sameTeamPlayers = playersList.filter(p => {
+      const normPlayerTeam = p.team.toLowerCase().trim();
+      return normRawTeam.includes(normPlayerTeam) || normPlayerTeam.includes(normRawTeam);
+    });
+    
+    const matchInTeam = sameTeamPlayers.find(p => {
+      const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      return normRawUser === normPName;
+    });
+    if (matchInTeam) return matchInTeam;
+    
+    // Buscar globalmente por si la IA detectó mal el equipo
+    const matchGlobal = playersList.find(p => {
+      const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      return normRawUser === normPName;
+    });
+    return matchGlobal;
+  };
+
   const handleImageSelected = async (file: File) => {
-    setIsScanning(true);
     setScannedData([]);
+    setCroppedPreviewSrc(null);
+    setManualEdits({});
     
     try {
       const reader = new FileReader();
-      reader.readAsDataURL(file);
       reader.onload = async () => {
-        const base64Str = (reader.result as string).split(",")[1];
-
-        const scanRes = await fetch("/api/scan", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ imageBase64: base64Str }),
-        });
-        const scanData = await scanRes.json();
-        
-        if (scanData.error) {
-          alert("Error de IA: " + scanData.error);
-          setIsScanning(false);
-          return;
-        }
-
-        const processedData = scanData.data.map((player: any, index: number) => {
-          const normalizedUsername = player.username?.trim();
-          const matchedPlayer = validPlayers.find(
-            (p) => p.name.trim().toLowerCase() === normalizedUsername.toLowerCase()
-          );
-
-          return {
-            id: String(Date.now() + index),
-            username: normalizedUsername || "",
-            team: matchedPlayer ? matchedPlayer.team : (player.team || activeTeam || ""),
-            pts: player.pts || 0,
-            reb: player.reb || 0,
-            ast: player.ast || 0,
-            stl: player.stl || 0,
-            blk: player.blk || 0,
-            fgm: player.fgm || 0,
-            tpm: player.tpm || 0,
-            nameMatched: !!matchedPlayer,
-          };
-        });
-
-        setScannedData(processedData);
-        setIsScanning(false);
-        setIsReviewing(true);
+        const resultStr = reader.result as string;
+        const base64Str = resultStr.split(',')[1];
+        setCroppedPreviewSrc(resultStr);
+        await handleCropScanned(base64Str);
       };
+      reader.readAsDataURL(file);
       
       reader.onerror = () => {
         alert("Error al leer el archivo.");
-        setIsScanning(false);
       };
+    } catch (error) {
+      console.error(error);
+      alert("Error al procesar la imagen.");
+    }
+  };
+
+  const handleCropScanned = async (base64Str: string) => {
+    setIsScanning(true);
+    setScannedData([]);
+    setCropImageSrc(null);
+    setManualEdits({});
+    
+    try {
+      const scanRes = await fetch("/api/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ 
+          imageBase64: base64Str,
+          rosterPlayers: validPlayers.map(p => ({ name: p.name, team: p.team })),
+          teams: Array.from(new Set(validPlayers.map(p => p.team)))
+        }),
+      });
+      const scanData = await scanRes.json();
+      
+      if (scanData.error) {
+        alert("Error de IA: " + scanData.error);
+        setIsScanning(false);
+        return;
+      }
+
+      const processedData = scanData.data.map((player: any, index: number) => {
+        const rawUsername = player.username?.trim() || "";
+        const rawTeam = player.team?.trim() || "";
+        
+        const uniqueTeamsList = Array.from(new Set(validPlayers.map(p => p.team))).sort();
+        
+        const matchedPlayer = findClosestPlayer(rawUsername, rawTeam, validPlayers);
+        const matchedTeamName = matchedPlayer 
+          ? matchedPlayer.team 
+          : (findClosestTeam(rawTeam, uniqueTeamsList) || activeTeam || "");
+
+        return {
+          id: String(Date.now() + index),
+          username: matchedPlayer ? matchedPlayer.name : rawUsername,
+          team: matchedTeamName,
+          pts: (player.pts === null || player.pts === undefined || player.pts === "") ? "" : player.pts,
+          reb: (player.reb === null || player.reb === undefined || player.reb === "") ? "" : player.reb,
+          ast: (player.ast === null || player.ast === undefined || player.ast === "") ? "" : player.ast,
+          stl: (player.stl === null || player.stl === undefined || player.stl === "") ? "" : player.stl,
+          blk: (player.blk === null || player.blk === undefined || player.blk === "") ? "" : player.blk,
+          to: "",
+          fouls: "",
+          fgm: (player.fgm === null || player.fgm === undefined || player.fgm === "") ? "" : player.fgm,
+          fga: (player.fga === null || player.fga === undefined || player.fga === "") ? "" : player.fga,
+          tpm: (player.tpm === null || player.tpm === undefined || player.tpm === "") ? "" : player.tpm,
+          tpa: (player.tpa === null || player.tpa === undefined || player.tpa === "") ? "" : player.tpa,
+          nameMatched: !!matchedPlayer,
+          lowConfidence: !!player.low_confidence,
+        };
+      });
+
+      setScannedData(processedData);
+      setIsScanning(false);
+      setIsReviewing(true);
     } catch (error) {
       console.error(error);
       alert("Error al procesar la imagen.");
@@ -353,13 +502,17 @@ export default function Home() {
         id: String(Date.now()),
         username: "",
         team: activeTeam || (validPlayers[0]?.team || ""),
-        pts: 0,
-        reb: 0,
-        ast: 0,
-        stl: 0,
-        blk: 0,
-        fgm: 0,
-        tpm: 0,
+        pts: "",
+        reb: "",
+        ast: "",
+        stl: "",
+        blk: "",
+        to: "",
+        fouls: "",
+        fgm: "",
+        fga: "",
+        tpm: "",
+        tpa: "",
         nameMatched: false
       }
     ]);
@@ -373,13 +526,17 @@ export default function Home() {
         id: String(Date.now()),
         username: "",
         team: activeTeam || (validPlayers[0]?.team || ""),
-        pts: 0,
-        reb: 0,
-        ast: 0,
-        stl: 0,
-        blk: 0,
-        fgm: 0,
-        tpm: 0,
+        pts: "",
+        reb: "",
+        ast: "",
+        stl: "",
+        blk: "",
+        to: "",
+        fouls: "",
+        fgm: "",
+        fga: "",
+        tpm: "",
+        tpa: "",
         nameMatched: false
       }
     ]);
@@ -392,9 +549,25 @@ export default function Home() {
   const handleUploadToPendingFirestore = async () => {
     setIsScanning(true);
     try {
+      const cleanPlayer = (p: any) => ({
+        ...p,
+        pts: p.pts === "" ? 0 : Number(p.pts),
+        reb: p.reb === "" ? 0 : Number(p.reb),
+        ast: p.ast === "" ? 0 : Number(p.ast),
+        stl: p.stl === "" ? 0 : Number(p.stl),
+        blk: p.blk === "" ? 0 : Number(p.blk),
+        to: p.to === "" ? 0 : Number(p.to),
+        fouls: p.fouls === "" ? 0 : Number(p.fouls),
+        fgm: p.fgm === "" ? 0 : Number(p.fgm),
+        fga: p.fga === "" ? 0 : Number(p.fga),
+        tpm: p.tpm === "" ? 0 : Number(p.tpm),
+        tpa: p.tpa === "" ? 0 : Number(p.tpa),
+      });
+
       const teamPoints: Record<string, number> = {};
       scannedData.forEach(p => {
-        teamPoints[p.team] = (teamPoints[p.team] || 0) + p.pts;
+        const ptsNum = p.pts === "" ? 0 : Number(p.pts);
+        teamPoints[p.team] = (teamPoints[p.team] || 0) + ptsNum;
       });
 
       const teams = Object.keys(teamPoints);
@@ -408,7 +581,7 @@ export default function Home() {
       const finalData = scannedData.map(p => {
         const opponent = teams.find(t => t !== p.team) || "Desconocido";
         const result = p.team === winningTeam ? "W" : "L";
-        return { ...p, opponent, result };
+        return { ...cleanPlayer(p), opponent, result };
       });
 
       await addDoc(collection(db, "pending_games"), {
@@ -445,6 +618,38 @@ export default function Home() {
       return;
     }
 
+    const hasEmptyOrLowConfidence = scannedData.some(p => {
+      const isEmpty = p.pts === "" || p.reb === "" || p.ast === "" || p.stl === "" || p.blk === "" || p.fgm === "" || p.fga === "" || p.tpm === "" || p.tpa === "";
+      return isEmpty;
+    });
+    
+    if (hasEmptyOrLowConfidence) {
+      alert(lang === 'en'
+        ? "Some player stats are empty or unread. Please review and fill in all values in yellow/amber before submitting."
+        : "Hay estadísticas de jugadores vacías o no detectadas. Por favor, revisa y completa todos los valores resaltados en amarillo/ámbar antes de enviar.");
+      return;
+    }
+
+    const hasLogicalErrors = scannedData.some(p => {
+      const hasFgError = Number(p.fgm || 0) > Number(p.fga || 0);
+      const has3pError = Number(p.tpm || 0) > Number(p.tpa || 0);
+      const has3pGreaterFgError = Number(p.tpm || 0) > Number(p.fgm || 0);
+      return hasFgError || has3pError || has3pGreaterFgError;
+    });
+
+    if (hasLogicalErrors) {
+      alert(lang === 'en'
+        ? "Some player stats contain mathematical errors (e.g. FGM > FGA or TPM > TPA). Please correct them before submitting."
+        : "Algunas estadísticas contienen errores matemáticos (ej: FGM > FGA o TPM > TPA). Por favor, corrígelos antes de enviar.");
+      return;
+    }
+
+    const isConfirmed = confirm(lang === 'en' 
+      ? "Are you sure you want to submit these stats to the league?" 
+      : "¿Estás seguro de que deseas enviar estas estadísticas a la liga?");
+      
+    if (!isConfirmed) return;
+
     if (captainProfile.role === 'captain') {
       await handleUploadToPendingFirestore();
     } else {
@@ -459,9 +664,25 @@ export default function Home() {
     if (uploadKey.trim().toLowerCase() === "bsn2k") {
       setShowUploadAuth(false);
       
+      const cleanPlayer = (p: any) => ({
+        ...p,
+        pts: p.pts === "" ? 0 : Number(p.pts),
+        reb: p.reb === "" ? 0 : Number(p.reb),
+        ast: p.ast === "" ? 0 : Number(p.ast),
+        stl: p.stl === "" ? 0 : Number(p.stl),
+        blk: p.blk === "" ? 0 : Number(p.blk),
+        to: p.to === "" ? 0 : Number(p.to),
+        fouls: p.fouls === "" ? 0 : Number(p.fouls),
+        fgm: p.fgm === "" ? 0 : Number(p.fgm),
+        fga: p.fga === "" ? 0 : Number(p.fga),
+        tpm: p.tpm === "" ? 0 : Number(p.tpm),
+        tpa: p.tpa === "" ? 0 : Number(p.tpa),
+      });
+
       const teamPoints: Record<string, number> = {};
       scannedData.forEach(p => {
-        teamPoints[p.team] = (teamPoints[p.team] || 0) + p.pts;
+        const ptsNum = p.pts === "" ? 0 : Number(p.pts);
+        teamPoints[p.team] = (teamPoints[p.team] || 0) + ptsNum;
       });
 
       const teams = Object.keys(teamPoints);
@@ -475,7 +696,7 @@ export default function Home() {
       const finalData = scannedData.map(p => {
         const opponent = teams.find(t => t !== p.team) || "Desconocido";
         const result = p.team === winningTeam ? "W" : "L";
-        return { ...p, opponent, result };
+        return { ...cleanPlayer(p), opponent, result };
       });
       
       try {
@@ -507,9 +728,12 @@ export default function Home() {
   const handlePendingDataChange = (index: number, field: string, value: any) => {
     setEditingGameData(prev => prev.map((p, idx) => {
       if (idx === index) {
+        const parsedValue = (field === 'username' || field === 'team')
+          ? value
+          : (value === "" ? "" : Number(value));
         const updated = { 
           ...p, 
-          [field]: field === 'username' || field === 'team' ? value : Number(value) 
+          [field]: parsedValue 
         };
         const matchedPlayer = validPlayers.find(
           (vp) => vp.name.trim().toLowerCase() === updated.username.trim().toLowerCase() && 
@@ -529,13 +753,17 @@ export default function Home() {
         id: String(Date.now()),
         username: "",
         team: editingGameData[0]?.team || validPlayers[0]?.team || "",
-        pts: 0,
-        reb: 0,
-        ast: 0,
-        stl: 0,
-        blk: 0,
-        fgm: 0,
-        tpm: 0,
+        pts: "",
+        reb: "",
+        ast: "",
+        stl: "",
+        blk: "",
+        to: "",
+        fouls: "",
+        fgm: "",
+        fga: "",
+        tpm: "",
+        tpa: "",
         nameMatched: false
       }
     ]);
@@ -563,9 +791,25 @@ export default function Home() {
 
     setIsScanning(true);
     try {
+      const cleanPlayer = (p: any) => ({
+        ...p,
+        pts: p.pts === "" ? 0 : Number(p.pts),
+        reb: p.reb === "" ? 0 : Number(p.reb),
+        ast: p.ast === "" ? 0 : Number(p.ast),
+        stl: p.stl === "" ? 0 : Number(p.stl),
+        blk: p.blk === "" ? 0 : Number(p.blk),
+        to: p.to === "" ? 0 : Number(p.to),
+        fouls: p.fouls === "" ? 0 : Number(p.fouls),
+        fgm: p.fgm === "" ? 0 : Number(p.fgm),
+        fga: p.fga === "" ? 0 : Number(p.fga),
+        tpm: p.tpm === "" ? 0 : Number(p.tpm),
+        tpa: p.tpa === "" ? 0 : Number(p.tpa),
+      });
+
       const teamPoints: Record<string, number> = {};
       editingGameData.forEach(p => {
-        teamPoints[p.team] = (teamPoints[p.team] || 0) + p.pts;
+        const ptsNum = p.pts === "" ? 0 : Number(p.pts);
+        teamPoints[p.team] = (teamPoints[p.team] || 0) + ptsNum;
       });
 
       const teams = Object.keys(teamPoints);
@@ -579,7 +823,7 @@ export default function Home() {
       const finalData = editingGameData.map(p => {
         const opponent = teams.find(t => t !== p.team) || "Desconocido";
         const result = p.team === winningTeam ? "W" : "L";
-        return { ...p, opponent, result };
+        return { ...cleanPlayer(p), opponent, result };
       });
 
       const res = await fetch("/api/sheets", {
@@ -627,11 +871,23 @@ export default function Home() {
   };
 
   const handleDataChange = (id: string, field: keyof ScannedPlayer, value: string) => {
+    // Record manual edit
+    setManualEdits(prev => ({
+      ...prev,
+      [id]: {
+        ...(prev[id] || {}),
+        [field]: true
+      }
+    }));
+
     setScannedData(prev => prev.map(p => {
       if (p.id === id) {
+        const parsedValue = (field === 'username' || field === 'team')
+          ? value
+          : (value === "" ? "" : Number(value));
         const updated = { 
           ...p, 
-          [field]: field === 'username' || field === 'team' ? value : Number(value) 
+          [field]: parsedValue
         };
         
         // Validar si el jugador existe en el roster oficial del equipo
@@ -1166,41 +1422,62 @@ export default function Home() {
                               </div>
                             </div>
 
-                            <div className="overflow-x-auto border border-white/10 rounded-xl bg-black/30 backdrop-blur-md">
-                              <table className="w-full text-left min-w-[650px] border-collapse">
+                            {editingGameDestinations.scoreboard && (
+                              <div className="p-3 bg-bsn-neon/10 border border-bsn-neon/20 rounded-xl text-bsn-neon text-[10px] font-bold flex items-center justify-between mt-2">
+                                <span className="flex items-center gap-1.5">
+                                  <span className="w-2.5 h-2.5 rounded-full bg-bsn-neon animate-ping shrink-0" />
+                                  {lang === 'en' 
+                                    ? "📝 Scroll table right to view/edit shot attempts (FGM/FGA & 3PM/3PA) ➡️" 
+                                    : "📝 Desliza la tabla a la derecha para ver/editar intentos de tiros (FGM/FGA y 3PM/3PA) ➡️"}
+                                </span>
+                              </div>
+                            )}
+
+                            <div className="overflow-x-auto custom-scrollbar border border-white/10 rounded-xl bg-black/30 backdrop-blur-md">
+                              <table className="w-full text-left min-w-[850px] border-collapse">
                                 <thead>
                                   <tr className="bg-black/50 border-b border-white/10 text-bsn-neon uppercase text-[9px] font-black tracking-wider">
                                     <th className="p-3">Equipo</th>
                                     <th className="p-3">Jugador / Username</th>
                                     <th className="p-3 text-center w-14">PTS</th>
-                                    <th className="p-3 text-center w-14">REB</th>
-                                    <th className="p-3 text-center w-14">AST</th>
-                                    <th className="p-3 text-center w-14">STL</th>
-                                    <th className="p-3 text-center w-14">BLK</th>
+                                    <th className="p-3 text-center w-12">REB</th>
+                                    <th className="p-3 text-center w-12">AST</th>
+                                    <th className="p-3 text-center w-12">STL</th>
+                                    <th className="p-3 text-center w-12">BLK</th>
                                     {editingGameDestinations.scoreboard && (
                                       <>
-                                        <th className="p-3 text-center w-14">FGM</th>
-                                        <th className="p-3 text-center w-14">3PM</th>
+                                        <th className="p-3 text-center w-28">FG (M/A)</th>
+                                        <th className="p-3 text-center w-28">3P (M/A)</th>
                                       </>
                                     )}
                                     <th className="p-3 text-center w-10">Acción</th>
                                   </tr>
                                 </thead>
-                                <tbody className="divide-y divide-white/5">
+                                <tbody className="divide-y divide-white/5 text-xs">
                                   {editingGameData.map((player, idx) => {
                                     const isRowMatched = player.nameMatched;
                                     const teamRoster = validPlayers.filter(vp => vp.team.toLowerCase().trim() === player.team.toLowerCase().trim());
                                     
+                                    // Logical warnings for stats
+                                    const calculatedPts = editingGameDestinations.scoreboard
+                                      ? ((Number(player.fgm || 0) - Number(player.tpm || 0)) * 2 + Number(player.tpm || 0) * 3)
+                                      : 0;
+                                    const hasPtsWarning = Number(player.pts || 0) < calculatedPts;
+                                    const hasFgWarning = Number(player.fgm || 0) > Number(player.fga || 0);
+                                    const has3pWarning = Number(player.tpm || 0) > Number(player.tpa || 0);
+                                    const has3pGreaterFgWarning = Number(player.tpm || 0) > Number(player.fgm || 0);
+
                                     return (
                                       <tr 
                                         key={idx} 
                                         className={`transition-colors duration-200 ${!isRowMatched ? 'bg-red-500/5 hover:bg-red-500/10' : 'hover:bg-white/5'}`}
                                       >
+                                        {/* Selector de Equipo */}
                                         <td className="p-2">
                                           <select 
                                             value={player.team} 
                                             onChange={(e) => handlePendingDataChange(idx, 'team', e.target.value)}
-                                            className="bg-black border border-white/15 text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-32"
+                                            className="bg-black/50 border border-white/10 text-white rounded-lg p-1.5 text-xs font-bold outline-none focus:border-bsn-neon w-32"
                                           >
                                             {uniqueTeams.map(t => (
                                               <option key={t} value={t}>{t}</option>
@@ -1208,12 +1485,13 @@ export default function Home() {
                                           </select>
                                         </td>
 
+                                        {/* Selector de Jugador */}
                                         <td className="p-2">
                                           <div className="flex flex-col gap-1">
                                             <select 
                                               value={player.username} 
                                               onChange={(e) => handlePendingDataChange(idx, 'username', e.target.value)}
-                                              className={`bg-black border text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-40 ${!isRowMatched ? 'border-red-500/40 text-red-400' : 'border-white/15'}`}
+                                              className={`bg-black/50 border text-white rounded-lg p-1.5 text-xs font-bold outline-none focus:border-bsn-neon w-40 ${!isRowMatched ? 'border-red-500/40 text-red-400' : 'border-white/10'}`}
                                             >
                                               <option value="">-- Selecciona Jugador --</option>
                                               {teamRoster.map(vp => (
@@ -1229,78 +1507,137 @@ export default function Home() {
                                           </div>
                                         </td>
 
-                                        <td className="p-2">
-                                          <input 
-                                            type="number" 
-                                            value={player.pts} 
-                                            onChange={(e) => handlePendingDataChange(idx, 'pts', e.target.value)}
-                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                            min="0"
-                                          />
+                                        {/* PTS */}
+                                        <td className="p-2 relative">
+                                          <div className="flex items-center justify-center gap-1">
+                                            <input 
+                                              type="number" 
+                                              value={player.pts === 0 ? "0" : (player.pts ?? "")} 
+                                              onChange={(e) => handlePendingDataChange(idx, 'pts', e.target.value)}
+                                              onFocus={(e) => e.target.select()}
+                                              className={`w-12 bg-black/50 border rounded-lg p-1.5 text-xs font-bold text-center focus:border-bsn-neon outline-none ${hasPtsWarning ? 'border-yellow-500/50 text-yellow-400' : 'border-white/10'}`}
+                                              min="0"
+                                            />
+                                            {hasPtsWarning && (
+                                              <span 
+                                                className="cursor-help text-yellow-500 shrink-0" 
+                                                title={lang === 'en' 
+                                                  ? "Points are less than FGM/3PM made points. Scroll right to adjust FGM/3PM if needed!" 
+                                                  : "Los puntos ingresados son menores a la suma de tiros anotados (FGM/3PM). Desplázate a la derecha y ajusta los tiros encestados si es necesario."}
+                                              >
+                                                ⚠️
+                                              </span>
+                                            )}
+                                          </div>
                                         </td>
+
+                                        {/* REB */}
                                         <td className="p-2">
                                           <input 
                                             type="number" 
-                                            value={player.reb} 
+                                            value={player.reb === 0 ? "0" : (player.reb ?? "")} 
                                             onChange={(e) => handlePendingDataChange(idx, 'reb', e.target.value)}
-                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            onFocus={(e) => e.target.select()}
+                                            className="w-10 bg-black/50 border border-white/10 rounded-lg p-1.5 text-xs font-bold text-center focus:border-bsn-neon outline-none"
                                             min="0"
                                           />
                                         </td>
+
+                                        {/* AST */}
                                         <td className="p-2">
                                           <input 
                                             type="number" 
-                                            value={player.ast} 
+                                            value={player.ast === 0 ? "0" : (player.ast ?? "")} 
                                             onChange={(e) => handlePendingDataChange(idx, 'ast', e.target.value)}
-                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            onFocus={(e) => e.target.select()}
+                                            className="w-10 bg-black/50 border border-white/10 rounded-lg p-1.5 text-xs font-bold text-center focus:border-bsn-neon outline-none"
                                             min="0"
                                           />
                                         </td>
+
+                                        {/* STL */}
                                         <td className="p-2">
                                           <input 
                                             type="number" 
-                                            value={player.stl} 
+                                            value={player.stl === 0 ? "0" : (player.stl ?? "")} 
                                             onChange={(e) => handlePendingDataChange(idx, 'stl', e.target.value)}
-                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            onFocus={(e) => e.target.select()}
+                                            className="w-10 bg-black/50 border border-white/10 rounded-lg p-1.5 text-xs font-bold text-center focus:border-bsn-neon outline-none"
                                             min="0"
                                           />
                                         </td>
+
+                                        {/* BLK */}
                                         <td className="p-2">
                                           <input 
                                             type="number" 
-                                            value={player.blk} 
+                                            value={player.blk === 0 ? "0" : (player.blk ?? "")} 
                                             onChange={(e) => handlePendingDataChange(idx, 'blk', e.target.value)}
-                                            className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
+                                            onFocus={(e) => e.target.select()}
+                                            className="w-10 bg-black/50 border border-white/10 rounded-lg p-1.5 text-xs font-bold text-center focus:border-bsn-neon outline-none"
                                             min="0"
                                           />
                                         </td>
+
+                                        {/* FGM / FGA Grouped */}
                                         {editingGameDestinations.scoreboard && (
                                           <>
                                             <td className="p-2">
-                                              <input 
-                                                type="number" 
-                                                value={player.fgm} 
-                                                onChange={(e) => handlePendingDataChange(idx, 'fgm', e.target.value)}
-                                                className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                                min="0"
-                                              />
+                                              <div className={`flex items-center justify-center bg-black/40 border rounded-lg px-1.5 py-1 ${hasFgWarning || has3pGreaterFgWarning ? 'border-red-500/40 text-red-400' : 'border-white/10 focus-within:border-bsn-neon'}`}>
+                                                <input 
+                                                  type="number" 
+                                                  placeholder="M"
+                                                  value={player.fgm === 0 ? "0" : (player.fgm ?? "")} 
+                                                  onChange={(e) => handlePendingDataChange(idx, 'fgm', e.target.value)}
+                                                  onFocus={(e) => e.target.select()}
+                                                  className="w-7 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                                  min="0"
+                                                />
+                                                <span className="text-neutral-500 font-bold px-1 text-xs select-none">/</span>
+                                                <input 
+                                                  type="number" 
+                                                  placeholder="A"
+                                                  value={player.fga === 0 ? "0" : (player.fga ?? "")} 
+                                                  onChange={(e) => handlePendingDataChange(idx, 'fga', e.target.value)}
+                                                  onFocus={(e) => e.target.select()}
+                                                  className="w-7 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                                  min="0"
+                                                />
+                                              </div>
                                             </td>
+
+                                            {/* 3PM / 3PA Grouped */}
                                             <td className="p-2">
-                                              <input 
-                                                type="number" 
-                                                value={player.tpm} 
-                                                onChange={(e) => handlePendingDataChange(idx, 'tpm', e.target.value)}
-                                                className="w-12 bg-black border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                                min="0"
-                                              />
+                                              <div className={`flex items-center justify-center bg-black/40 border rounded-lg px-1.5 py-1 ${has3pWarning || has3pGreaterFgWarning ? 'border-red-500/40 text-red-400' : 'border-white/10 focus-within:border-bsn-neon'}`}>
+                                                <input 
+                                                  type="number" 
+                                                  placeholder="M"
+                                                  value={player.tpm === 0 ? "0" : (player.tpm ?? "")} 
+                                                  onChange={(e) => handlePendingDataChange(idx, 'tpm', e.target.value)}
+                                                  onFocus={(e) => e.target.select()}
+                                                  className="w-7 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                                  min="0"
+                                                />
+                                                <span className="text-neutral-500 font-bold px-1 text-xs select-none">/</span>
+                                                <input 
+                                                  type="number" 
+                                                  placeholder="A"
+                                                  value={player.tpa === 0 ? "0" : (player.tpa ?? "")} 
+                                                  onChange={(e) => handlePendingDataChange(idx, 'tpa', e.target.value)}
+                                                  onFocus={(e) => e.target.select()}
+                                                  className="w-7 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                                  min="0"
+                                                />
+                                              </div>
                                             </td>
                                           </>
                                         )}
                                         
+                                        {/* Eliminar Fila */}
                                         <td className="p-2 text-center">
                                           <button 
                                             onClick={() => handleRemoveRowFromPending(idx)}
-                                            className="p-1.5 text-red-400 hover:text-red-500 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors"
+                                            className="p-1.5 text-red-400 hover:text-red-500 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors cursor-pointer"
                                           >
                                             <Trash2 className="w-3.5 h-3.5" />
                                           </button>
@@ -1414,43 +1751,123 @@ export default function Home() {
               </div>
             ) : (
               <div className="space-y-6">
+                {/* Visual Validation Preview Layout */}
+                {croppedPreviewSrc && (
+                  <div className="w-full bg-[#09090e]/95 backdrop-blur-md p-4 border border-white/10 rounded-2xl shadow-[0_15px_30px_rgba(0,0,0,0.8)] mb-6">
+                    <HDInteractiveViewer imageSrc={croppedPreviewSrc} lang={lang} />
+                  </div>
+                )}
+
                 {/* Editor Interactivo de Estadísticas */}
-                <div className="overflow-x-auto border border-white/10 rounded-xl bg-black/30 backdrop-blur-md">
-                  <table className="w-full text-left min-w-[700px] border-collapse">
+                {destinations.scoreboard && (
+                  <div className="p-3 bg-bsn-neon/10 border border-bsn-neon/20 rounded-xl text-bsn-neon text-xs font-bold flex items-center justify-between mb-2">
+                    <span className="flex items-center gap-1.5">
+                      <span className="w-2.5 h-2.5 rounded-full bg-bsn-neon animate-ping shrink-0" />
+                      {lang === 'en' 
+                        ? "📝 Scroll table right to view/edit shot attempts (FGM/FGA & 3PM/3PA) ➡️" 
+                        : "📝 Desliza la tabla a la derecha para ver/editar intentos de tiros (FGM/FGA y 3PM/3PA) ➡️"}
+                    </span>
+                  </div>
+                )}
+                <div className="overflow-x-auto custom-scrollbar border border-white/10 rounded-xl bg-black/30 backdrop-blur-md">
+                  <table className="w-full text-left min-w-[850px] border-collapse">
                     <thead>
                       <tr className="bg-black/50 border-b border-white/10 text-bsn-neon uppercase text-[10px] font-black tracking-wider">
                         <th className="p-4">Equipo</th>
                         <th className="p-4">Jugador / Username</th>
                         <th className="p-4 text-center w-16">PTS</th>
-                        <th className="p-4 text-center w-16">REB</th>
-                        <th className="p-4 text-center w-16">AST</th>
-                        <th className="p-4 text-center w-16">STL</th>
-                        <th className="p-4 text-center w-16">BLK</th>
+                        <th className="p-4 text-center w-14">REB</th>
+                        <th className="p-4 text-center w-14">AST</th>
+                        <th className="p-4 text-center w-14">STL</th>
+                        <th className="p-4 text-center w-14">BLK</th>
                         {destinations.scoreboard && (
                           <>
-                            <th className="p-4 text-center w-16">FGM</th>
-                            <th className="p-4 text-center w-16">3PM</th>
+                            <th className="p-4 text-center w-32">FG (M/A)</th>
+                            <th className="p-4 text-center w-32">3P (M/A)</th>
                           </>
                         )}
                         <th className="p-4 text-center w-12">Acción</th>
                       </tr>
                     </thead>
-                    <tbody className="divide-y divide-white/5">
-                      {scannedData.map((player) => {
+                    <tbody className="divide-y divide-white/5 text-xs">
+                       {scannedData.map((player) => {
                         const isRowMatched = player.nameMatched;
                         const teamRoster = validPlayers.filter(vp => vp.team.toLowerCase().trim() === player.team.toLowerCase().trim());
                         
+                        // Logical warnings for stats
+                        const calculatedPts = destinations.scoreboard
+                          ? ((Number(player.fgm || 0) - Number(player.tpm || 0)) * 2 + Number(player.tpm || 0) * 3)
+                          : 0;
+                        const hasPtsWarning = Number(player.pts || 0) < calculatedPts;
+                        const hasFgWarning = Number(player.fgm || 0) > Number(player.fga || 0);
+                        const has3pWarning = Number(player.tpm || 0) > Number(player.tpa || 0);
+                        const has3pGreaterFgWarning = Number(player.tpm || 0) > Number(player.fgm || 0);
+
+                        // High values check (out of range)
+                        const isPtsHigh = Number(player.pts || 0) > 80;
+                        const isRebHigh = Number(player.reb || 0) > 30;
+                        const isAstHigh = Number(player.ast || 0) > 30;
+                        const isStlHigh = Number(player.stl || 0) > 15;
+                        const isBlkHigh = Number(player.blk || 0) > 15;
+
+                        const hasEmptyStats = player.pts === "" || player.reb === "" || player.ast === "" || player.stl === "" || player.blk === "" || player.fgm === "" || player.fga === "" || player.tpm === "" || player.tpa === "";
+                        const isLowConfidence = player.lowConfidence === true || hasEmptyStats;
+                        const isFgLowConfidence = player.lowConfidence === true || player.fgm === "" || player.fga === "";
+                        const is3pLowConfidence = player.lowConfidence === true || player.tpm === "" || player.tpa === "";
+                        const hasAnyWarning = hasPtsWarning || hasFgWarning || has3pWarning || has3pGreaterFgWarning || isPtsHigh || isRebHigh || isAstHigh || isStlHigh || isBlkHigh;
+
+                        let rowBgClass = "hover:bg-white/5";
+                        let borderLeftClass = "border-l-2 border-l-transparent";
+
+                        if (!isRowMatched) {
+                          // Unmatched name -> yellow alert
+                          rowBgClass = "bg-yellow-500/5 hover:bg-yellow-500/10";
+                          borderLeftClass = "border-l-4 border-l-yellow-500/80";
+                        } else if (isLowConfidence) {
+                          // Low confidence OCR or empty stats -> yellow alert
+                          rowBgClass = "bg-yellow-500/5 hover:bg-yellow-500/10";
+                          borderLeftClass = "border-l-4 border-l-yellow-500/80";
+                        } else if (hasAnyWarning) {
+                          // Has logical warnings or out-of-range stats -> red alert
+                          rowBgClass = "bg-red-500/5 hover:bg-red-500/10";
+                          borderLeftClass = "border-l-4 border-l-red-500/80";
+                        } else {
+                          // Lectura correcta (Green confirmation border)
+                          rowBgClass = "bg-green-500/5 hover:bg-green-500/10";
+                          borderLeftClass = "border-l-4 border-l-green-500/80";
+                        }
+
+                        const getFieldInputClass = (field: keyof ScannedPlayer, isHigh: boolean = false) => {
+                          const isEdited = manualEdits[player.id]?.[field] === true;
+                          const isLowField = player.lowConfidence === true && (field === 'pts' || field === 'reb' || field === 'ast' || field === 'stl' || field === 'blk' || field === 'fgm' || field === 'fga' || field === 'tpm' || field === 'tpa');
+                          const isEmptyField = player[field] === "";
+                          
+                          if (isHigh) {
+                            return "border-yellow-500/50 text-yellow-400 bg-yellow-500/5";
+                          }
+                          if (isLowField || isEmptyField) {
+                            return "border-amber-500 text-amber-300 bg-amber-500/5 shadow-[0_0_8px_rgba(245,158,11,0.25)] animate-pulse";
+                          }
+                          if (isEdited) {
+                            return "border-amber-500 text-amber-300 bg-amber-500/5 shadow-[0_0_8px_rgba(245,158,11,0.25)]";
+                          }
+                          return "border-white/10";
+                        };
+
+                        const isTeamEdited = manualEdits[player.id]?.['team'] === true;
+                        const isUserEdited = manualEdits[player.id]?.['username'] === true;
+
                         return (
                           <tr 
                             key={player.id} 
-                            className={`transition-colors duration-300 ${!isRowMatched ? 'bg-red-500/5 hover:bg-red-500/10' : 'hover:bg-white/5'}`}
+                            className={`transition-colors duration-300 ${rowBgClass} ${borderLeftClass}`}
                           >
                             {/* Selector de Equipo */}
                             <td className="p-3">
                               <select 
                                 value={player.team} 
                                 onChange={(e) => handleDataChange(player.id, 'team', e.target.value)}
-                                className="bg-black/40 border border-white/10 text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-36"
+                                className={`bg-black/40 border text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-36 ${isTeamEdited ? 'border-amber-500 text-amber-300 bg-amber-500/5' : 'border-white/10'}`}
                               >
                                 {uniqueTeams.map(team => (
                                   <option key={team} value={team}>{team}</option>
@@ -1464,7 +1881,7 @@ export default function Home() {
                                 <select 
                                   value={player.username} 
                                   onChange={(e) => handleDataChange(player.id, 'username', e.target.value)}
-                                  className={`bg-black/40 border text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-44 ${!isRowMatched ? 'border-red-500/40 text-red-400' : 'border-white/10'}`}
+                                  className={`bg-black/40 border text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-44 ${!isRowMatched ? 'border-yellow-500/40 text-yellow-400 bg-yellow-500/5' : (isUserEdited ? 'border-amber-500 text-amber-300 bg-amber-500/5' : 'border-white/10')}`}
                                 >
                                   <option value="">-- Selecciona Jugador --</option>
                                   {teamRoster.map(vp => (
@@ -1472,7 +1889,7 @@ export default function Home() {
                                   ))}
                                 </select>
                                 {!isRowMatched && (
-                                  <span className="text-[9px] font-black text-red-500 flex items-center gap-1 mt-0.5">
+                                  <span className="text-[9px] font-black text-yellow-500 flex items-center gap-1 mt-0.5 animate-pulse">
                                     <AlertCircle className="w-3 h-3" />
                                     {t[lang].unmatchedError}
                                   </span>
@@ -1480,71 +1897,150 @@ export default function Home() {
                               </div>
                             </td>
 
-                            {/* Campos Numéricos de Stats */}
+                            {/* PTS */}
                             <td className="p-3">
-                              <input 
-                                type="number" 
-                                value={player.pts} 
-                                onChange={(e) => handleDataChange(player.id, 'pts', e.target.value)}
-                                className="w-14 bg-black/40 border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                min="0"
-                              />
+                              <div className="flex items-center justify-center gap-1">
+                                <input 
+                                  type="number" 
+                                  value={player.pts === 0 ? "0" : (player.pts ?? "")} 
+                                  onChange={(e) => handleDataChange(player.id, 'pts', e.target.value)}
+                                  onFocus={(e) => e.target.select()}
+                                  className={`w-14 bg-black/40 border rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon outline-none ${hasPtsWarning ? 'border-red-500/50 text-red-400 bg-red-500/5' : (isPtsHigh ? 'border-yellow-500/50 text-yellow-400 bg-yellow-500/5' : (manualEdits[player.id]?.['pts'] === true ? 'border-amber-500 text-amber-300 bg-amber-500/5 shadow-[0_0_8px_rgba(245,158,11,0.25)]' : 'border-white/10'))}`}
+                                  min="0"
+                                />
+                                {(hasPtsWarning || isPtsHigh) && (
+                                  <span 
+                                    className={`cursor-help shrink-0 ${hasPtsWarning ? 'text-red-500' : 'text-yellow-500'}`} 
+                                    title={hasPtsWarning 
+                                      ? (lang === 'en' 
+                                        ? "Points are less than FGM/3PM made points. Scroll right to adjust FGM/3PM if needed!" 
+                                        : "Los puntos ingresados son menores a la suma de tiros anotados (FGM/3PM). Desplázate a la derecha y ajusta los tiros encestados si es necesario.")
+                                      : (lang === 'en' ? "Extremely high points value." : "Valor de puntos extremadamente alto.")}
+                                  >
+                                    ⚠️
+                                  </span>
+                                )}
+                              </div>
                             </td>
+
+                            {/* REB */}
                             <td className="p-3">
-                              <input 
-                                type="number" 
-                                value={player.reb} 
-                                onChange={(e) => handleDataChange(player.id, 'reb', e.target.value)}
-                                className="w-14 bg-black/40 border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                min="0"
-                              />
+                              <div className="flex items-center justify-center gap-1">
+                                <input 
+                                  type="number" 
+                                  value={player.reb === 0 ? "0" : (player.reb ?? "")} 
+                                  onChange={(e) => handleDataChange(player.id, 'reb', e.target.value)}
+                                  onFocus={(e) => e.target.select()}
+                                  className={`w-12 bg-black/40 border rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon outline-none ${getFieldInputClass('reb', isRebHigh)}`}
+                                  min="0"
+                                />
+                                {isRebHigh && (
+                                  <span className="text-yellow-500 cursor-help shrink-0 font-bold" title={lang === 'en' ? "Extremely high rebounds value." : "Valor de rebotes extremadamente alto."}>⚠️</span>
+                                )}
+                              </div>
                             </td>
+
+                            {/* AST */}
                             <td className="p-3">
-                              <input 
-                                type="number" 
-                                value={player.ast} 
-                                onChange={(e) => handleDataChange(player.id, 'ast', e.target.value)}
-                                className="w-14 bg-black/40 border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                min="0"
-                              />
+                              <div className="flex items-center justify-center gap-1">
+                                <input 
+                                  type="number" 
+                                  value={player.ast === 0 ? "0" : (player.ast ?? "")} 
+                                  onChange={(e) => handleDataChange(player.id, 'ast', e.target.value)}
+                                  onFocus={(e) => e.target.select()}
+                                  className={`w-12 bg-black/40 border rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon outline-none ${getFieldInputClass('ast', isAstHigh)}`}
+                                  min="0"
+                                />
+                                {isAstHigh && (
+                                  <span className="text-yellow-500 cursor-help shrink-0 font-bold" title={lang === 'en' ? "Extremely high assists value." : "Valor de asistencias extremadamente alto."}>⚠️</span>
+                                )}
+                              </div>
                             </td>
+
+                            {/* STL */}
                             <td className="p-3">
-                              <input 
-                                type="number" 
-                                value={player.stl} 
-                                onChange={(e) => handleDataChange(player.id, 'stl', e.target.value)}
-                                className="w-14 bg-black/40 border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                min="0"
-                              />
+                              <div className="flex items-center justify-center gap-1">
+                                <input 
+                                  type="number" 
+                                  value={player.stl === 0 ? "0" : (player.stl ?? "")} 
+                                  onChange={(e) => handleDataChange(player.id, 'stl', e.target.value)}
+                                  onFocus={(e) => e.target.select()}
+                                  className={`w-12 bg-black/40 border rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon outline-none ${getFieldInputClass('stl', isStlHigh)}`}
+                                  min="0"
+                                />
+                                {isStlHigh && (
+                                  <span className="text-yellow-500 cursor-help shrink-0 font-bold" title={lang === 'en' ? "Extremely high steals value." : "Valor de robos extremadamente alto."}>⚠️</span>
+                                )}
+                              </div>
                             </td>
+
+                            {/* BLK */}
                             <td className="p-3">
-                              <input 
-                                type="number" 
-                                value={player.blk} 
-                                onChange={(e) => handleDataChange(player.id, 'blk', e.target.value)}
-                                className="w-14 bg-black/40 border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                min="0"
-                              />
+                              <div className="flex items-center justify-center gap-1">
+                                <input 
+                                  type="number" 
+                                  value={player.blk === 0 ? "0" : (player.blk ?? "")} 
+                                  onChange={(e) => handleDataChange(player.id, 'blk', e.target.value)}
+                                  onFocus={(e) => e.target.select()}
+                                  className={`w-12 bg-black/40 border rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon outline-none ${getFieldInputClass('blk', isBlkHigh)}`}
+                                  min="0"
+                                />
+                                {isBlkHigh && (
+                                  <span className="text-yellow-500 cursor-help shrink-0 font-bold" title={lang === 'en' ? "Extremely high blocks value." : "Valor de tapones extremadamente alto."}>⚠️</span>
+                                )}
+                              </div>
                             </td>
+
+                            {/* FGM / FGA Grouped */}
                             {destinations.scoreboard && (
                               <>
                                 <td className="p-3">
-                                  <input 
-                                    type="number" 
-                                    value={player.fgm} 
-                                    onChange={(e) => handleDataChange(player.id, 'fgm', e.target.value)}
-                                    className="w-14 bg-black/40 border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                    min="0"
-                                  />
+                                  <div className={`flex items-center justify-center bg-black/40 border rounded-lg px-2 py-1.5 ${hasFgWarning || has3pGreaterFgWarning ? 'border-red-500/40 text-red-400 bg-red-500/5' : (isFgLowConfidence ? 'border-amber-500 text-amber-300 bg-amber-500/5 shadow-[0_0_8px_rgba(245,158,11,0.25)] animate-pulse' : ((manualEdits[player.id]?.['fgm'] || manualEdits[player.id]?.['fga']) ? 'border-amber-500 text-amber-300 bg-amber-500/5 shadow-[0_0_8px_rgba(245,158,11,0.25)]' : 'border-white/10 focus-within:border-bsn-neon'))}`}>
+                                    <input 
+                                      type="number" 
+                                      placeholder="M"
+                                      value={player.fgm === 0 ? "0" : (player.fgm ?? "")} 
+                                      onChange={(e) => handleDataChange(player.id, 'fgm', e.target.value)}
+                                      onFocus={(e) => e.target.select()}
+                                      className="w-8 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                      min="0"
+                                    />
+                                    <span className="text-neutral-500 font-bold px-1 text-xs select-none">/</span>
+                                    <input 
+                                      type="number" 
+                                      placeholder="A"
+                                      value={player.fga === 0 ? "0" : (player.fga ?? "")} 
+                                      onChange={(e) => handleDataChange(player.id, 'fga', e.target.value)}
+                                      onFocus={(e) => e.target.select()}
+                                      className="w-8 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                      min="0"
+                                    />
+                                  </div>
                                 </td>
+
+                                {/* 3PM / 3PA Grouped */}
                                 <td className="p-3">
-                                  <input 
-                                    type="number" 
-                                    value={player.tpm} 
-                                    onChange={(e) => handleDataChange(player.id, 'tpm', e.target.value)}
-                                    className="w-14 bg-black/40 border border-white/10 rounded-lg p-2 text-xs font-bold text-center focus:border-bsn-neon"
-                                    min="0"
-                                  />
+                                  <div className={`flex items-center justify-center bg-black/40 border rounded-lg px-2 py-1.5 ${has3pWarning || has3pGreaterFgWarning ? 'border-red-500/40 text-red-400 bg-red-500/5' : (is3pLowConfidence ? 'border-amber-500 text-amber-300 bg-amber-500/5 shadow-[0_0_8px_rgba(245,158,11,0.25)] animate-pulse' : ((manualEdits[player.id]?.['tpm'] || manualEdits[player.id]?.['tpa']) ? 'border-amber-500 text-amber-300 bg-amber-500/5 shadow-[0_0_8px_rgba(245,158,11,0.25)]' : 'border-white/10 focus-within:border-bsn-neon'))}`}>
+                                    <input 
+                                      type="number" 
+                                      placeholder="M"
+                                      value={player.tpm === 0 ? "0" : (player.tpm ?? "")} 
+                                      onChange={(e) => handleDataChange(player.id, 'tpm', e.target.value)}
+                                      onFocus={(e) => e.target.select()}
+                                      className="w-8 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                      min="0"
+                                    />
+                                    <span className="text-neutral-500 font-bold px-1 text-xs select-none">/</span>
+                                    <input 
+                                      type="number" 
+                                      placeholder="A"
+                                      value={player.tpa === 0 ? "0" : (player.tpa ?? "")} 
+                                      onChange={(e) => handleDataChange(player.id, 'tpa', e.target.value)}
+                                      onFocus={(e) => e.target.select()}
+                                      className="w-8 bg-transparent text-center text-xs font-black focus:outline-none text-white placeholder-neutral-700"
+                                      min="0"
+                                    />
+                                  </div>
                                 </td>
                               </>
                             )}
@@ -1553,7 +2049,7 @@ export default function Home() {
                             <td className="p-3 text-center">
                               <button 
                                 onClick={() => handleRemoveRow(player.id)}
-                                className="p-2 text-red-400 hover:text-red-500 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors"
+                                className="p-2 text-red-400 hover:text-red-500 bg-red-500/10 hover:bg-red-500/20 border border-red-500/20 rounded-lg transition-colors cursor-pointer"
                               >
                                 <Trash2 className="w-4 h-4" />
                               </button>
