@@ -103,6 +103,16 @@ export default function Home() {
 
   const [lang, setLang] = useState<'en' | 'es'>('es');
   const [destinations, setDestinations] = useState({ scoreboard: true, individual: true });
+  const [selectedWeek, setSelectedWeek] = useState<string>("Actual");
+
+  useEffect(() => {
+    if (selectedWeek !== "Actual") {
+      setDestinations({ scoreboard: true, individual: false });
+    } else {
+      setDestinations({ scoreboard: true, individual: true });
+    }
+  }, [selectedWeek]);
+
   const [isScanning, setIsScanning] = useState(false);
   const [isReviewing, setIsReviewing] = useState(false);
   const [scannedData, setScannedData] = useState<ScannedPlayer[]>([]);
@@ -589,7 +599,8 @@ export default function Home() {
         submittedAt: new Date().toISOString(),
         team: activeTeam,
         data: finalData,
-        destinations: destinations
+        destinations: destinations,
+        semana: selectedWeek || ""
       });
 
       alert(lang === 'en' 
@@ -704,7 +715,7 @@ export default function Home() {
         const res = await fetch("/api/sheets", {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ data: finalData, destinations })
+          body: JSON.stringify({ data: finalData, destinations, semana: selectedWeek })
         });
         const resData = await res.json();
         
@@ -826,10 +837,13 @@ export default function Home() {
         return { ...cleanPlayer(p), opponent, result };
       });
 
+      const pendingGameObj = pendingGames.find(g => g.id === gameId);
+      const gameSemana = pendingGameObj?.semana || "";
+
       const res = await fetch("/api/sheets", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ data: finalData, destinations: editingGameDestinations })
+        body: JSON.stringify({ data: finalData, destinations: editingGameDestinations, semana: gameSemana })
       });
       const resData = await res.json();
 
@@ -1367,6 +1381,11 @@ export default function Home() {
                               <p className="text-[8px] text-gray-500 font-bold mt-0.5">
                                 {new Date(game.submittedAt).toLocaleString("es-PR")}
                               </p>
+                              {game.semana && game.semana !== "Actual" && (
+                                <span className="inline-block bg-yellow-500/10 border border-yellow-500/20 text-yellow-500 text-[8px] font-black uppercase px-2 py-0.5 rounded-md mt-1 tracking-widest">
+                                  📅 {game.semana}
+                                </span>
+                              )}
                             </div>
                           </div>
 
@@ -1399,7 +1418,14 @@ export default function Home() {
                         {isEditingThisGame && (
                           <div className="border-t border-white/5 bg-black/30 p-4 space-y-4">
                             <div className="flex flex-wrap gap-4 items-center justify-between p-3.5 bg-black/40 border border-white/5 rounded-xl">
-                              <span className="text-xs font-black text-gray-400 uppercase">{lang === 'en' ? "Select Destinations:" : "Destinos del Registro:"}</span>
+                              <div className="flex flex-col">
+                                <span className="text-xs font-black text-gray-400 uppercase">{lang === 'en' ? "Select Destinations:" : "Destinos del Registro:"}</span>
+                                {game.semana && game.semana !== "Actual" && (
+                                  <span className="text-[10px] text-yellow-500 font-bold uppercase mt-1">
+                                    📅 {lang === 'en' ? `WEEK: ${game.semana} (Historical Scoreboard Only)` : `SEMANA: ${game.semana} (Solo Scoreboard Histórico)`}
+                                  </span>
+                                )}
+                              </div>
                               <div className="flex gap-4">
                                 <label className="flex items-center space-x-2 cursor-pointer select-none">
                                   <input 
@@ -1692,32 +1718,84 @@ export default function Home() {
             </div>
 
             {/* Configuración de Guardado / Destino de Stats */}
-            <div className="flex flex-col md:flex-row justify-between items-start md:items-center p-5 bg-black/40 border border-white/5 rounded-2xl mb-8 gap-4 md:gap-0">
-              <div>
-                <h3 className="text-sm font-black uppercase text-gray-400 tracking-wider mb-1">{t[lang].destTitle}</h3>
-                <p className="text-xs text-gray-500">Decide a qué hojas de cálculo se enviarán los datos recopilados.</p>
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6 p-5 bg-black/40 border border-white/5 rounded-2xl mb-8">
+              {/* Columna Izquierda: Selector de Jornada */}
+              <div className="flex flex-col justify-center">
+                <h3 className="text-sm font-black uppercase text-gray-400 tracking-wider mb-2">
+                  {lang === 'en' ? 'Game Week (Jornada)' : 'Semana del Juego (Jornada)'}
+                </h3>
+                <div className="relative">
+                  <select
+                    value={selectedWeek}
+                    onChange={(e) => setSelectedWeek(e.target.value)}
+                    className="w-full bg-black/60 border border-white/10 rounded-xl p-3 text-sm font-bold text-white outline-none focus:border-bsn-neon transition-all cursor-pointer appearance-none pr-10"
+                  >
+                    <option value="Actual">{lang === 'en' ? 'Regular Season (Current)' : 'Jornada Regular (Actual)'}</option>
+                    {Array.from({ length: 12 }, (_, i) => `Semana ${i + 1}`).map((week) => (
+                      <option key={week} value={week}>
+                        {lang === 'en' ? `Week ${week.split(' ')[1]}` : week}
+                      </option>
+                    ))}
+                  </select>
+                  {/* Flechita para custom select */}
+                  <div className="absolute inset-y-0 right-0 flex items-center pr-3 pointer-events-none text-gray-400">
+                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 9l-7 7-7-7"></path>
+                    </svg>
+                  </div>
+                </div>
+                {selectedWeek !== "Actual" && (
+                  <p className="text-[10px] text-yellow-500 font-bold mt-2">
+                    {lang === 'en' 
+                      ? '⚠️ Historical mode: Players list (Individual Stats) is automatically disabled.' 
+                      : '⚠️ Modo histórico: La lista de jugadores (Stats Individuales) se desactiva automáticamente.'}
+                  </p>
+                )}
               </div>
-              <div className="flex flex-col gap-2">
-                <p className="text-[10px] font-black uppercase text-bsn-neon tracking-wider sm:text-left text-right">{t[lang].selectOneOrBoth}</p>
-                <div className="flex flex-col sm:flex-row gap-4">
-                  <label className="flex items-center space-x-3 cursor-pointer group select-none">
-                    <input 
-                      type="checkbox" 
-                      checked={destinations.scoreboard} 
-                      onChange={() => toggleDestination('scoreboard')} 
-                      className="w-5 h-5 accent-bsn-neon rounded bg-black/60 border border-white/20 focus:ring-0 focus:ring-offset-0" 
-                    />
-                    <span className="text-xs font-bold text-gray-300 group-hover:text-white transition-colors">Scoreboard</span>
-                  </label>
-                  <label className="flex items-center space-x-3 cursor-pointer group select-none">
-                    <input 
-                      type="checkbox" 
-                      checked={destinations.individual} 
-                      onChange={() => toggleDestination('individual')} 
-                      className="w-5 h-5 accent-bsn-neon rounded bg-black/60 border border-white/20 focus:ring-0 focus:ring-offset-0" 
-                    />
-                    <span className="text-xs font-bold text-gray-300 group-hover:text-white transition-colors">{lang === 'en' ? 'Players list' : 'Lista Jugadores'}</span>
-                  </label>
+
+              {/* Columna Derecha: Destinos de Stats */}
+              <div className="flex flex-col justify-between">
+                <div>
+                  <h3 className="text-sm font-black uppercase text-gray-400 tracking-wider mb-1">{t[lang].destTitle}</h3>
+                  <p className="text-xs text-gray-500">Decide a qué hojas de cálculo se enviarán los datos recopilados.</p>
+                </div>
+                <div className="flex flex-col gap-2 mt-4 md:mt-2">
+                  <p className="text-[10px] font-black uppercase text-bsn-neon tracking-wider">
+                    {t[lang].selectOneOrBoth}
+                  </p>
+                  <div className="flex flex-col sm:flex-row gap-4">
+                    <label className="flex items-center space-x-3 cursor-pointer group select-none">
+                      <input 
+                        type="checkbox" 
+                        checked={destinations.scoreboard} 
+                        onChange={() => toggleDestination('scoreboard')} 
+                        className="w-5 h-5 accent-bsn-neon rounded bg-black/60 border border-white/20 focus:ring-0 focus:ring-offset-0 cursor-pointer" 
+                      />
+                      <span className="text-xs font-bold text-gray-300 group-hover:text-white transition-colors">Scoreboard</span>
+                    </label>
+                    <label 
+                      className={`flex items-center space-x-3 select-none ${
+                        selectedWeek !== "Actual" 
+                          ? 'opacity-50 cursor-not-allowed' 
+                          : 'cursor-pointer group'
+                      }`}
+                    >
+                      <input 
+                        type="checkbox" 
+                        checked={destinations.individual} 
+                        onChange={() => toggleDestination('individual')} 
+                        disabled={selectedWeek !== "Actual"}
+                        className={`w-5 h-5 accent-bsn-neon rounded bg-black/60 border border-white/20 focus:ring-0 focus:ring-offset-0 ${
+                          selectedWeek !== "Actual" ? 'cursor-not-allowed opacity-50' : 'cursor-pointer'
+                        }`} 
+                      />
+                      <span className={`text-xs font-bold text-gray-300 transition-colors ${
+                        selectedWeek !== "Actual" ? '' : 'group-hover:text-white'
+                      }`}>
+                        {lang === 'en' ? 'Players list' : 'Lista Jugadores'}
+                      </span>
+                    </label>
+                  </div>
                 </div>
               </div>
             </div>

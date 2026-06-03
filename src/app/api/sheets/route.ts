@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { data, destinations } = await req.json();
+    const { data, destinations, semana } = await req.json();
 
     if (!data || !destinations) {
       return NextResponse.json({ error: "Missing data" }, { status: 400 });
@@ -79,68 +79,123 @@ export async function POST(req: NextRequest) {
 
     const { scoreboard, individual } = destinations;
     
-    // Autogenerar el Game ID y verificar duplicados
+    // Autogenerar o buscar el Game ID
     let finalGameId = "BSN001";
-    if (scoreboard || individual) {
-      try {
-        const idRes = await sheets.spreadsheets.values.get({
-          spreadsheetId: SPREADSHEET_ID,
-          range: "GAME_PLAYER_STATS!A:K", // Traer hasta la K (BLK) para verificar duplicados
-        });
-        const idRows = idRes.data.values || [];
-        
-        if (idRows.length > 1) {
-          // 1. Obtener el próximo Game ID
-          const lastId = idRows[idRows.length - 1][0];
-          if (lastId && lastId.startsWith("BSN")) {
-            const numPart = parseInt(lastId.replace("BSN", ""), 10);
-            if (!isNaN(numPart)) {
-              finalGameId = `BSN${String(numPart + 1).padStart(3, '0')}`;
-            }
-          }
-
-          // 2. Verificar duplicados exactos (Scoreboard Signature)
-          // Crear firma del scoreboard entrante: "Player-PTS-REB-AST"
-          const incomingSignature = data
-            .map((p: any) => `${p.username.toLowerCase()}-${p.pts || 0}-${p.reb || 0}-${p.ast || 0}`)
-            .sort()
-            .join("|");
-
-          // Agrupar filas existentes por Game ID y crear sus firmas
-          const gamesSignatures: Record<string, string[]> = {};
-          idRows.slice(1).forEach(row => {
-            const gId = row[0];
-            const pName = (row[4] || "").toLowerCase();
-            const pPts = row[5] || "0";
-            const pAst = row[6] || "0";
-            const pReb = row[7] || "0";
-            
-            if (gId && pName) {
-              if (!gamesSignatures[gId]) gamesSignatures[gId] = [];
-              gamesSignatures[gId].push(`${pName}-${pPts}-${pReb}-${pAst}`);
-            }
-          });
-
-          // Comparar firmas
-          for (const [gId, sigArray] of Object.entries(gamesSignatures)) {
-            const existingSignature = sigArray.sort().join("|");
-            if (incomingSignature === existingSignature) {
-              return NextResponse.json({ 
-                error: `Este scoreboard ya fue registrado anteriormente bajo el juego ${gId}. No se pueden subir datos duplicados.` 
-              }, { status: 409 }); // 409 Conflict
-            }
-          }
-        }
-      } catch (e) {
-        console.warn("Error verificando historial de Game IDs y duplicados", e);
-      }
-    }
-
-    const dateStr = new Date().toLocaleDateString("es-PR", {
+    let dateStr = new Date().toLocaleDateString("es-PR", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric"
     });
+
+    // 1. Obtener todas las filas de GAME_PLAYER_STATS para duplicados/auto-id
+    let idRows: any[] = [];
+    try {
+      const idRes = await sheets.spreadsheets.values.get({
+        spreadsheetId: SPREADSHEET_ID,
+        range: "GAME_PLAYER_STATS!A:K", // Traer hasta la K (BLK) para verificar duplicados
+      });
+      idRows = idRes.data.values || [];
+    } catch (e) {
+      console.warn("Error leyendo GAME_PLAYER_STATS para duplicados/auto-id:", e);
+    }
+
+    // 2. Verificar duplicados exactos (Scoreboard Signature)
+    if (idRows.length > 1) {
+      const incomingSignature = data
+        .map((p: any) => `${p.username.toLowerCase()}-${p.pts || 0}-${p.reb || 0}-${p.ast || 0}`)
+        .sort()
+        .join("|");
+
+      const gamesSignatures: Record<string, string[]> = {};
+      idRows.slice(1).forEach(row => {
+        const gId = row[0];
+        const pName = (row[4] || "").toLowerCase();
+        const pPts = row[5] || "0";
+        const pAst = row[6] || "0";
+        const pReb = row[7] || "0";
+        
+        if (gId && pName) {
+          if (!gamesSignatures[gId]) gamesSignatures[gId] = [];
+          gamesSignatures[gId].push(`${pName}-${pPts}-${pReb}-${pAst}`);
+        }
+      });
+
+      for (const [gId, sigArray] of Object.entries(gamesSignatures)) {
+        const existingSignature = sigArray.sort().join("|");
+        if (incomingSignature === existingSignature) {
+          return NextResponse.json({ 
+            error: `Este scoreboard ya fue registrado anteriormente bajo el juego ${gId}. No se pueden subir datos duplicados.` 
+          }, { status: 409 });
+        }
+      }
+    }
+
+    // 3. Resolver Game ID y Fecha
+    if (semana && semana !== "Actual") {
+      try {
+        const resInput = await sheets.spreadsheets.values.get({
+          spreadsheetId: SPREADSHEET_ID,
+          range: "Resultados_Input!A1:E250",
+        });
+        const inputRows = resInput.data.values || [];
+        
+        // Equipos escaneados
+        const scannedTeams = Array.from(new Set(data.map((p: any) => p.team)))
+          .map((t: any) => String(t).toLowerCase().trim());
+        
+        let matchedGameId: string | null = null;
+        let matchedDate: string | null = null;
+        
+        for (const row of inputRows) {
+          const gId = row[0];
+          const rSemana = row[1];
+          const rDate = row[2];
+          const homeTeam = row[3];
+          const awayTeam = row[4];
+          
+          if (gId && rSemana && homeTeam && awayTeam) {
+            if (rSemana.toLowerCase().trim() === semana.toLowerCase().trim()) {
+              const normalizedHome = homeTeam.toLowerCase().trim();
+              const normalizedAway = awayTeam.toLowerCase().trim();
+              
+              const matchesHome = scannedTeams.some(t => t.includes(normalizedHome) || normalizedHome.includes(t));
+              const matchesAway = scannedTeams.some(t => t.includes(normalizedAway) || normalizedAway.includes(t));
+              
+              if (matchesHome && matchesAway) {
+                matchedGameId = gId;
+                matchedDate = rDate;
+                break;
+              }
+            }
+          }
+        }
+        
+        if (matchedGameId) {
+          finalGameId = matchedGameId;
+          if (matchedDate) {
+            dateStr = matchedDate;
+          }
+        } else {
+          return NextResponse.json({ 
+            error: `No se encontró ningún juego registrado para ${scannedTeams.join(" vs ")} en la "${semana}" en la pestaña Resultados_Input. Por favor verifica que los nombres de los equipos coincidan con el calendario.` 
+          }, { status: 404 });
+        }
+      } catch (err: any) {
+        console.error("Error consultando Resultados_Input para juego histórico:", err);
+        return NextResponse.json({ error: "Error de servidor al buscar el juego histórico: " + err.message }, { status: 500 });
+      }
+    } else {
+      // Auto-incrementar Game ID
+      if (idRows.length > 1) {
+        const lastId = idRows[idRows.length - 1][0];
+        if (lastId && lastId.startsWith("BSN")) {
+          const numPart = parseInt(lastId.replace("BSN", ""), 10);
+          if (!isNaN(numPart)) {
+            finalGameId = `BSN${String(numPart + 1).padStart(3, '0')}`;
+          }
+        }
+      }
+    }
 
     // 1. SCOREBOARD -> Añadir nueva fila en GAME_PLAYER_STATS
     if (scoreboard) {
