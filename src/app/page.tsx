@@ -1687,86 +1687,94 @@ export default function Home() {
                             </div>
 
                             {/* Panel de Resultados para Admin (Resultados_Input) */}
-                            <div className="p-4 bg-black/40 border border-white/5 rounded-xl space-y-3">
-                              <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/5 pb-2">
-                                <div>
-                                  <h4 className="text-xs font-black uppercase text-bsn-neon tracking-wider">
-                                    {lang === 'en' ? 'Results Details (Resultados_Input)' : 'Detalles de Resultados (Resultados_Input)'}
-                                  </h4>
-                                </div>
-                                <label className="flex items-center space-x-2 cursor-pointer select-none mt-1 sm:mt-0">
-                                  <input 
-                                    type="checkbox" 
-                                    checked={editingGameIsForfeit} 
-                                    onChange={(e) => handleEditingToggleForfeit(e.target.checked)}
-                                    className="w-3.5 h-3.5 accent-red-500 rounded bg-black/60 border border-white/20" 
-                                  />
-                                  <span className="text-[10px] font-black uppercase tracking-wider text-red-400">
-                                    {lang === 'en' ? 'Forfeit (Default Win)' : 'Forfeit (Victoria por Default)'}
-                                  </span>
-                                </label>
-                              </div>
-
-                              <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
-                                {/* Fecha */}
-                                <div className="flex flex-col justify-center">
-                                  <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">
-                                    {lang === 'en' ? 'Date played' : 'Fecha del juego'}
+                            {(!game.semana || game.semana === "Actual") ? (
+                              <div className="p-4 bg-black/40 border border-white/5 rounded-xl space-y-3">
+                                <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/5 pb-2">
+                                  <div>
+                                    <h4 className="text-xs font-black uppercase text-bsn-neon tracking-wider">
+                                      {lang === 'en' ? 'Results Details (Resultados_Input)' : 'Detalles de Resultados (Resultados_Input)'}
+                                    </h4>
+                                  </div>
+                                  <label className="flex items-center space-x-2 cursor-pointer select-none mt-1 sm:mt-0">
+                                    <input 
+                                      type="checkbox" 
+                                      checked={editingGameIsForfeit} 
+                                      onChange={(e) => handleEditingToggleForfeit(e.target.checked)}
+                                      className="w-3.5 h-3.5 accent-red-500 rounded bg-black/60 border border-white/20" 
+                                    />
+                                    <span className="text-[10px] font-black uppercase tracking-wider text-red-400">
+                                      {lang === 'en' ? 'Forfeit (Default Win)' : 'Forfeit (Victoria por Default)'}
+                                    </span>
                                   </label>
-                                  <input 
-                                    type="date" 
-                                    value={editingGameFecha} 
-                                    onChange={(e) => setEditingGameFecha(e.target.value)}
-                                    className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-lg p-2 outline-none text-white text-xs font-bold w-full"
-                                  />
                                 </div>
 
-                                {/* Scores de Equipos */}
-                                <div className="md:col-span-2 grid grid-cols-2 gap-3">
-                                  {Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean).map((teamName) => (
-                                    <div key={teamName} className="flex flex-col justify-center">
-                                      <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 truncate">
-                                        {lang === 'en' ? `Points ${teamName}` : `Puntos ${teamName}`}
-                                      </label>
-                                      <input 
-                                        type="number" 
-                                        value={editingGameScores[teamName] ?? 0} 
-                                        onChange={(e) => {
-                                          const val = e.target.value === "" ? "" : Number(e.target.value);
-                                          setEditingGameScores(prev => ({ ...prev, [teamName]: val }));
-                                        }}
-                                        disabled={editingGameIsForfeit}
-                                        className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-lg p-2 outline-none text-white text-xs font-bold w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                                        min="0"
-                                      />
-                                    </div>
-                                  ))}
-                                </div>
-                              </div>
+                                <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
+                                  {/* Fecha */}
+                                  <div className="flex flex-col justify-center">
+                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">
+                                      {lang === 'en' ? 'Date played' : 'Fecha del juego'}
+                                    </label>
+                                    <input 
+                                      type="date" 
+                                      value={editingGameFecha} 
+                                      onChange={(e) => setEditingGameFecha(e.target.value)}
+                                      className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-lg p-2 outline-none text-white text-xs font-bold w-full"
+                                    />
+                                  </div>
 
-                              {/* Ganador */}
-                              <div className="flex flex-col sm:flex-row justify-between items-center bg-black/20 p-2 rounded-lg border border-white/5 gap-2">
-                                <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider">
-                                  {lang === 'en' ? 'Winner:' : 'Ganador:'}
-                                </span>
-                                <div className="flex items-center gap-2">
-                                  {Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean).map((teamName) => (
-                                    <button
-                                      key={teamName}
-                                      onClick={() => handleEditingWinnerChange(teamName)}
-                                      type="button"
-                                      className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all border ${
-                                        editingGameWinner === teamName 
-                                          ? 'bg-bsn-neon border-bsn-neon text-black' 
-                                          : 'bg-black/40 border-white/10 text-gray-400 hover:text-white'
-                                      }`}
-                                    >
-                                      {teamName}
-                                    </button>
-                                  ))}
+                                  {/* Scores de Equipos */}
+                                  <div className="md:col-span-2 grid grid-cols-2 gap-3">
+                                    {Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean).map((teamName) => (
+                                      <div key={teamName} className="flex flex-col justify-center">
+                                        <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 truncate">
+                                          {lang === 'en' ? `Points ${teamName}` : `Puntos ${teamName}`}
+                                        </label>
+                                        <input 
+                                          type="number" 
+                                          value={editingGameScores[teamName] ?? 0} 
+                                          onChange={(e) => {
+                                            const val = e.target.value === "" ? "" : Number(e.target.value);
+                                            setEditingGameScores(prev => ({ ...prev, [teamName]: val }));
+                                          }}
+                                          disabled={editingGameIsForfeit}
+                                          className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-lg p-2 outline-none text-white text-xs font-bold w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                                          min="0"
+                                        />
+                                      </div>
+                                    ))}
+                                  </div>
+                                </div>
+
+                                {/* Ganador */}
+                                <div className="flex flex-col sm:flex-row justify-between items-center bg-black/20 p-2 rounded-lg border border-white/5 gap-2">
+                                  <span className="text-[10px] font-black uppercase text-gray-400 tracking-wider">
+                                    {lang === 'en' ? 'Winner:' : 'Ganador:'}
+                                  </span>
+                                  <div className="flex items-center gap-2">
+                                    {Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean).map((teamName) => (
+                                      <button
+                                        key={teamName}
+                                        onClick={() => handleEditingWinnerChange(teamName)}
+                                        type="button"
+                                        className={`px-2.5 py-1 rounded-md text-[10px] font-black uppercase tracking-wider transition-all border ${
+                                          editingGameWinner === teamName 
+                                            ? 'bg-bsn-neon border-bsn-neon text-black' 
+                                            : 'bg-black/40 border-white/10 text-gray-400 hover:text-white'
+                                        }`}
+                                      >
+                                        {teamName}
+                                      </button>
+                                    ))}
+                                  </div>
                                 </div>
                               </div>
-                            </div>
+                            ) : (
+                              <div className="p-3 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-yellow-400 text-[10px] font-semibold leading-relaxed">
+                                📅 {lang === 'en'
+                                  ? "Historical Mode: Results (scores, date, and winner) for this week are already registered in Google Sheets and will not be modified."
+                                  : "Modo Histórico: Los resultados de esta semana (marcador, fecha y ganador) ya están registrados en Google Sheets y no serán modificados."}
+                              </div>
+                            )}
 
                             {editingGameDestinations.scoreboard && (
                               <div className="p-3 bg-bsn-neon/10 border border-bsn-neon/20 rounded-xl text-bsn-neon text-[10px] font-bold flex items-center justify-between mt-2">
@@ -2157,89 +2165,97 @@ export default function Home() {
                 )}
 
                 {/* Panel de Detalles del Partido */}
-                <div className="p-5 bg-black/40 border border-white/5 rounded-2xl space-y-4">
-                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/5 pb-3">
-                    <div>
-                      <h3 className="text-sm font-black uppercase text-bsn-neon tracking-wider">
-                        {lang === 'en' ? 'Match Results Details' : 'Detalles del Resultado del Partido'}
-                      </h3>
-                      <p className="text-[10px] text-gray-500">
-                        {lang === 'en' ? 'These values will update the Resultados_Input sheet tab.' : 'Estos valores actualizarán la pestaña Resultados_Input de la hoja.'}
-                      </p>
-                    </div>
-                    <label className="flex items-center space-x-2 cursor-pointer select-none mt-2 sm:mt-0">
-                      <input 
-                        type="checkbox" 
-                        checked={isForfeit} 
-                        onChange={(e) => handleToggleForfeit(e.target.checked)}
-                        className="w-4 h-4 accent-red-500 rounded bg-black/60 border border-white/20" 
-                      />
-                      <span className="text-xs font-black uppercase tracking-wider text-red-400">
-                        {lang === 'en' ? 'Forfeit (Default Win)' : 'Forfeit (Victoria por Default)'}
-                      </span>
-                    </label>
-                  </div>
-
-                  <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    {/* Fecha */}
-                    <div className="flex flex-col justify-center">
-                      <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
-                        {lang === 'en' ? 'Date played' : 'Fecha del juego'}
+                {selectedWeek === "Actual" ? (
+                  <div className="p-5 bg-black/40 border border-white/5 rounded-2xl space-y-4">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center border-b border-white/5 pb-3">
+                      <div>
+                        <h3 className="text-sm font-black uppercase text-bsn-neon tracking-wider">
+                          {lang === 'en' ? 'Match Results Details' : 'Detalles del Resultado del Partido'}
+                        </h3>
+                        <p className="text-[10px] text-gray-500">
+                          {lang === 'en' ? 'These values will update the Resultados_Input sheet tab.' : 'Estos valores actualizarán la pestaña Resultados_Input de la hoja.'}
+                        </p>
+                      </div>
+                      <label className="flex items-center space-x-2 cursor-pointer select-none mt-2 sm:mt-0">
+                        <input 
+                          type="checkbox" 
+                          checked={isForfeit} 
+                          onChange={(e) => handleToggleForfeit(e.target.checked)}
+                          className="w-4 h-4 accent-red-500 rounded bg-black/60 border border-white/20" 
+                        />
+                        <span className="text-xs font-black uppercase tracking-wider text-red-400">
+                          {lang === 'en' ? 'Forfeit (Default Win)' : 'Forfeit (Victoria por Default)'}
+                        </span>
                       </label>
-                      <input 
-                        type="date" 
-                        value={selectedDate} 
-                        onChange={(e) => setSelectedDate(e.target.value)}
-                        className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-xl p-2.5 outline-none text-white text-xs font-bold w-full"
-                      />
                     </div>
 
-                    {/* Scores de Equipos */}
-                    <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                      {Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean).map((teamName) => (
-                        <div key={teamName} className="flex flex-col justify-center">
-                          <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5 truncate">
-                            {lang === 'en' ? `Points ${teamName}` : `Puntos ${teamName}`}
-                          </label>
-                          <input 
-                            type="number" 
-                            value={customScores[teamName] ?? 0} 
-                            onChange={(e) => {
-                              const val = e.target.value === "" ? "" : Number(e.target.value);
-                              setCustomScores(prev => ({ ...prev, [teamName]: val }));
-                            }}
-                            disabled={isForfeit}
-                            className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-xl p-2.5 outline-none text-white text-xs font-bold w-full disabled:opacity-50 disabled:cursor-not-allowed"
-                            min="0"
-                          />
-                        </div>
-                      ))}
-                    </div>
-                  </div>
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                      {/* Fecha */}
+                      <div className="flex flex-col justify-center">
+                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
+                          {lang === 'en' ? 'Date played' : 'Fecha del juego'}
+                        </label>
+                        <input 
+                          type="date" 
+                          value={selectedDate} 
+                          onChange={(e) => setSelectedDate(e.target.value)}
+                          className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-xl p-2.5 outline-none text-white text-xs font-bold w-full"
+                        />
+                      </div>
 
-                  {/* Ganador */}
-                  <div className="flex flex-col sm:flex-row justify-between items-center bg-black/20 p-3 rounded-xl border border-white/5 gap-3">
-                    <span className="text-xs font-black uppercase text-gray-400 tracking-wider">
-                      {lang === 'en' ? 'Winner:' : 'Ganador del Juego:'}
-                    </span>
-                    <div className="flex items-center gap-2">
-                      {Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean).map((teamName) => (
-                        <button
-                          key={teamName}
-                          onClick={() => handleWinnerChange(teamName)}
-                          type="button"
-                          className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all border ${
-                            selectedWinner === teamName 
-                              ? 'bg-bsn-neon border-bsn-neon text-black shadow-[0_0_10px_var(--color-bsn-neon)]' 
-                              : 'bg-black/40 border-white/10 text-gray-400 hover:text-white'
-                          }`}
-                        >
-                          {teamName}
-                        </button>
-                      ))}
+                      {/* Scores de Equipos */}
+                      <div className="md:col-span-2 grid grid-cols-2 gap-4">
+                        {Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean).map((teamName) => (
+                          <div key={teamName} className="flex flex-col justify-center">
+                            <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5 truncate">
+                              {lang === 'en' ? `Points ${teamName}` : `Puntos ${teamName}`}
+                            </label>
+                            <input 
+                              type="number" 
+                              value={customScores[teamName] ?? 0} 
+                              onChange={(e) => {
+                                const val = e.target.value === "" ? "" : Number(e.target.value);
+                                setCustomScores(prev => ({ ...prev, [teamName]: val }));
+                              }}
+                              disabled={isForfeit}
+                              className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-xl p-2.5 outline-none text-white text-xs font-bold w-full disabled:opacity-50 disabled:cursor-not-allowed"
+                              min="0"
+                            />
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+
+                    {/* Ganador */}
+                    <div className="flex flex-col sm:flex-row justify-between items-center bg-black/20 p-3 rounded-xl border border-white/5 gap-3">
+                      <span className="text-xs font-black uppercase text-gray-400 tracking-wider">
+                        {lang === 'en' ? 'Winner:' : 'Ganador del Juego:'}
+                      </span>
+                      <div className="flex items-center gap-2">
+                        {Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean).map((teamName) => (
+                          <button
+                            key={teamName}
+                            onClick={() => handleWinnerChange(teamName)}
+                            type="button"
+                            className={`px-3 py-1.5 rounded-lg text-xs font-black uppercase tracking-wider transition-all border ${
+                              selectedWinner === teamName 
+                                ? 'bg-bsn-neon border-bsn-neon text-black shadow-[0_0_10px_var(--color-bsn-neon)]' 
+                                : 'bg-black/40 border-white/10 text-gray-400 hover:text-white'
+                            }`}
+                          >
+                            {teamName}
+                          </button>
+                        ))}
+                      </div>
                     </div>
                   </div>
-                </div>
+                ) : (
+                  <div className="p-4 bg-yellow-500/10 border border-yellow-500/20 rounded-xl text-yellow-400 text-xs font-semibold leading-relaxed">
+                    📅 {lang === 'en'
+                      ? "Historical Mode: Results (scores, date, and winner) for this week are already registered in Google Sheets and will not be overwritten. Only player stats will be uploaded."
+                      : "Modo Histórico: Los resultados de esta semana (marcador, fecha y ganador) ya están registrados en Google Sheets y no serán modificados. Solo se subirán las estadísticas de los jugadores."}
+                  </div>
+                )}
 
                 {/* Editor Interactivo de Estadísticas */}
                 {destinations.scoreboard && (

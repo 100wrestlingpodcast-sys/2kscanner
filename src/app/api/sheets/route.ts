@@ -212,63 +212,70 @@ export async function POST(req: NextRequest) {
 
         // Si encontramos el partido, actualizamos sus resultados en Resultados_Input
         if (matchedRowIndex !== null && matchedRowIndex !== undefined) {
-          const rowNum = matchedRowIndex + 1;
-          const row = inputRows[matchedRowIndex];
-          const homeTeam = row[3];
-          const awayTeam = row[4];
-          
-          let homeScore = 0;
-          let awayScore = 0;
-          
-          const homeName = String(homeTeam).toLowerCase().trim();
-          const awayName = String(awayTeam).toLowerCase().trim();
-          
-          // Buscar en scores del payload
-          for (const [tName, val] of Object.entries(scores || {})) {
-            const normTName = tName.toLowerCase().trim();
-            if (normTName.includes(homeName) || homeName.includes(normTName)) {
-              homeScore = Number(val);
-            }
-            if (normTName.includes(awayName) || awayName.includes(normTName)) {
-              awayScore = Number(val);
-            }
-          }
-
-          if (isForfeit) {
-            const normWinnerName = String(winner).toLowerCase().trim();
-            if (normWinnerName.includes(homeName) || homeName.includes(normWinnerName)) {
-              homeScore = 20;
-              awayScore = 0;
-            } else {
-              homeScore = 0;
-              awayScore = 20;
-            }
-          }
-
-          const targetDate = fecha || matchedDate || dateStr;
-
-          // Escribir en Resultados_Input: Fecha (C), Equipo Local (D), Equipo Visitante (E), PTS Local (F), PTS Visitante (G), Ganador (H), Notas (I)
-          await sheets.spreadsheets.values.update({
-            spreadsheetId: SPREADSHEET_ID,
-            range: `Resultados_Input!C${rowNum}:I${rowNum}`,
-            valueInputOption: "USER_ENTERED",
-            requestBody: {
-              values: [
-                [
-                  targetDate,
-                  homeTeam,
-                  awayTeam,
-                  isForfeit ? homeScore : (homeScore || 0),
-                  isForfeit ? awayScore : (awayScore || 0),
-                  winner || "",
-                  isForfeit ? "forfait" : ""
-                ]
-              ]
-            }
-          });
-
           finalGameId = matchedGameId || "BSN001";
-          dateStr = targetDate;
+          
+          if (semana && semana !== "Actual") {
+            // Modo histórico: no modificamos Resultados_Input, solo recuperamos la fecha programada
+            dateStr = matchedDate || dateStr;
+          } else {
+            // Modo Semana Actual: sí actualizamos los marcadores y ganador del partido
+            const rowNum = matchedRowIndex + 1;
+            const row = inputRows[matchedRowIndex];
+            const homeTeam = row[3];
+            const awayTeam = row[4];
+            
+            let homeScore = 0;
+            let awayScore = 0;
+            
+            const homeName = String(homeTeam).toLowerCase().trim();
+            const awayName = String(awayTeam).toLowerCase().trim();
+            
+            // Buscar en scores del payload
+            for (const [tName, val] of Object.entries(scores || {})) {
+              const normTName = tName.toLowerCase().trim();
+              if (normTName.includes(homeName) || homeName.includes(normTName)) {
+                homeScore = Number(val);
+              }
+              if (normTName.includes(awayName) || awayName.includes(normTName)) {
+                awayScore = Number(val);
+              }
+            }
+
+            if (isForfeit) {
+              const normWinnerName = String(winner).toLowerCase().trim();
+              if (normWinnerName.includes(homeName) || homeName.includes(normWinnerName)) {
+                homeScore = 20;
+                awayScore = 0;
+              } else {
+                homeScore = 0;
+                awayScore = 20;
+              }
+            }
+
+            const targetDate = fecha || matchedDate || dateStr;
+
+            // Escribir en Resultados_Input: Fecha (C), Equipo Local (D), Equipo Visitante (E), PTS Local (F), PTS Visitante (G), Ganador (H), Notas (I)
+            await sheets.spreadsheets.values.update({
+              spreadsheetId: SPREADSHEET_ID,
+              range: `Resultados_Input!C${rowNum}:I${rowNum}`,
+              valueInputOption: "USER_ENTERED",
+              requestBody: {
+                values: [
+                  [
+                    targetDate,
+                    homeTeam,
+                    awayTeam,
+                    isForfeit ? homeScore : (homeScore || 0),
+                    isForfeit ? awayScore : (awayScore || 0),
+                    winner || "",
+                    isForfeit ? "forfait" : ""
+                  ]
+                ]
+              }
+            });
+
+            dateStr = targetDate;
+          }
         } else {
           return NextResponse.json({ 
             error: `No se encontró ningún juego registrado para ${scannedTeams.join(" vs ")} ${semana !== "Actual" ? `en la "${semana}"` : ""} en la pestaña Resultados_Input. Por favor verifica que los nombres de los equipos coincidan con el calendario.` 
