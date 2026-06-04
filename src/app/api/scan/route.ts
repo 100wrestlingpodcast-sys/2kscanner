@@ -53,11 +53,12 @@ Your objective is to read the attached scoreboard image and transcribe statistic
 
 CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
 1. Locate the Column Header Row:
-   Identify the horizontal row containing column headers. Look specifically for columns: PLAYER (or Player/Username), PTS, REB, AST, STL, BLK, FGM/FGA (or FG M/A), and 3PM/3PA (or 3P M/A).
+   Identify the horizontal row containing column headers (e.g., GRD, PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA).
+   Note: There is NO header text for the Player/Username column; player names (gamer tags) are located on the far left of each row, next to the platform/avatar icons, to the left of the GRD column.
    
 2. Establish Exact Horizontal Coordinates (X-axis Calibration):
-   Determine the exact horizontal coordinate (or center line) of each of these headers:
-   - PLAYER
+   Determine the exact horizontal coordinate (or center line) of each of these columns:
+   - PLAYER (the region on the far left containing the player gamer tags, to the left of the GRD column)
    - PTS
    - REB
    - AST
@@ -68,14 +69,17 @@ CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
 
 3. Read Stats Vertically (Y-axis Lineup Scan):
    For every player row in the scoreboard:
-   - Extract the Playstation/Xbox gamer ID in the Player/Username column.
-   - For each statistic (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA), look directly vertically downwards from that header's X-axis position. Extract ONLY the number or fraction that falls directly inside that column's vertical alignment slice.
+   - Extract the Playstation/Xbox gamer ID in the PLAYER column. Make sure to read it precisely, respecting special characters like underscores (_), dashes (-), and numbers.
+   - For each statistic (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA), look directly vertically downwards from that column's X-axis position. Extract ONLY the number or fraction that falls directly inside that column's vertical alignment slice.
    - **PREFER EMPTY OVER GUESSING / SHIFTING**: If a cell under a header is blank, unreadable, or missing, do NOT shift numbers from adjacent columns to fill the gap. Set that field to null.
    - If there is any doubt about which column a number belongs to, set it to null and set the flag "low_confidence": true for that player.
    - Completely ignore and discard all other columns like GRD, FOULS, TO, FTM/FTA, team total rows, score overlays, and background details.
 
 4. Identify Teams:
-   Assign each player to their correct team name based on the team header above their table section.
+   - Assign each player to their correct team name.
+   - If the team headers (e.g. team name text or logos) are visible above their respective table section, use them.
+   - If team headers are NOT visible in the image (e.g. if the image is cropped or only shows the box score rows), look at the EXPECTED ROSTER PLAYERS list to see which team the player belongs to (for example, if you match the player to "BubaluRD-_-023", assign them to team "Criollos").
+   - If a player is not in the expected roster, assign them to the same team as the other players in their 5-player section.
 
 ${rosterContext}${teamsContext}
 
