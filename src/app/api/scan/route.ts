@@ -69,9 +69,9 @@ CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
 
 3. Read Stats Vertically (Y-axis Lineup Scan):
    For every player row in the scoreboard:
-   - Extract the Playstation/Xbox gamer ID in the PLAYER column. Make sure to read it precisely, respecting special characters like underscores (_), dashes (-), and numbers.
+   - For the PLAYER column (gamer tags on the far left), extract the PlayStation/Xbox gamer ID (username) precisely as text. This column must NEVER be left empty or null unless the row is completely blank. Be very thorough in transcribing the exact spelling, case, and special characters (underscores, hyphens, numbers) of each username.
    - For each statistic (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA), look directly vertically downwards from that column's X-axis position. Extract ONLY the number or fraction that falls directly inside that column's vertical alignment slice.
-   - **PREFER EMPTY OVER GUESSING / SHIFTING**: If a cell under a header is blank, unreadable, or missing, do NOT shift numbers from adjacent columns to fill the gap. Set that field to null.
+   - **PREFER EMPTY OVER GUESSING / SHIFTING for numeric stats**: If a cell under a numeric header (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA) is blank, unreadable, or missing, do NOT shift numbers from adjacent columns to fill the gap. Set that field to null. (However, as stated above, you must always transcribe the PLAYER username text).
    - If there is any doubt about which column a number belongs to, set it to null and set the flag "low_confidence": true for that player.
    - Completely ignore and discard all other columns like GRD, FOULS, TO, FTM/FTA, team total rows, score overlays, and background details.
 
