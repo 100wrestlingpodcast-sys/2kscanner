@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
-    const { data, destinations, semana } = await req.json();
+    const { data, destinations, semana, fecha, scores, winner, isForfeit } = await req.json();
 
     if (!data || !destinations) {
       return NextResponse.json({ error: "Missing data" }, { status: 400 });
@@ -81,7 +81,7 @@ export async function POST(req: NextRequest) {
     
     // Autogenerar o buscar el Game ID
     let finalGameId = "BSN001";
-    let dateStr = new Date().toLocaleDateString("es-PR", {
+    let dateStr = fecha || new Date().toLocaleDateString("es-PR", {
       day: "2-digit",
       month: "2-digit",
       year: "numeric"
@@ -130,71 +130,157 @@ export async function POST(req: NextRequest) {
       }
     }
 
-    // 3. Resolver Game ID y Fecha
-    if (semana && semana !== "Actual") {
+    // 3. Resolver Game ID y Fecha desde Resultados_Input y actualizar marcador
+    let matchedGameId: string | null = null;
+    let matchedDate: string | null = null;
+    let matchedRowIndex: number | null = null;
+    
+    // Equipos escaneados
+    const scannedTeams = Array.from(new Set(data.map((p: any) => p.team)))
+      .map((t: any) => String(t).toLowerCase().trim());
+
+    if (scannedTeams.length > 0) {
       try {
         const resInput = await sheets.spreadsheets.values.get({
           spreadsheetId: SPREADSHEET_ID,
-          range: "Resultados_Input!A1:E250",
+          range: "Resultados_Input!A1:I250",
         });
         const inputRows = resInput.data.values || [];
         
-        // Equipos escaneados
-        const scannedTeams = Array.from(new Set(data.map((p: any) => p.team)))
-          .map((t: any) => String(t).toLowerCase().trim());
-        
-        let matchedGameId: string | null = null;
-        let matchedDate: string | null = null;
-        
-        for (const row of inputRows) {
+        for (let i = 0; i < inputRows.length; i++) {
+          const row = inputRows[i];
           const gId = row[0];
           const rSemana = row[1];
           const rDate = row[2];
           const homeTeam = row[3];
           const awayTeam = row[4];
           
-          if (gId && rSemana && homeTeam && awayTeam) {
-            if (rSemana.toLowerCase().trim() === semana.toLowerCase().trim()) {
-              const normalizedHome = homeTeam.toLowerCase().trim();
-              const normalizedAway = awayTeam.toLowerCase().trim();
-              
-              const matchesHome = scannedTeams.some(t => t.includes(normalizedHome) || normalizedHome.includes(t));
-              const matchesAway = scannedTeams.some(t => t.includes(normalizedAway) || normalizedAway.includes(t));
-              
-              if (matchesHome && matchesAway) {
-                matchedGameId = gId;
-                matchedDate = rDate;
-                break;
+          if (gId && homeTeam && awayTeam) {
+            const normalizedHome = homeTeam.toLowerCase().trim();
+            const normalizedAway = awayTeam.toLowerCase().trim();
+            
+            const matchesHome = scannedTeams.some(t => t.includes(normalizedHome) || normalizedHome.includes(t));
+            const matchesAway = scannedTeams.some(t => t.includes(normalizedAway) || normalizedAway.includes(t));
+            
+            if (matchesHome && matchesAway) {
+              // Si especificó semana específica, la semana debe coincidir
+              if (semana && semana !== "Actual") {
+                if (rSemana.toLowerCase().trim() === semana.toLowerCase().trim()) {
+                  matchedGameId = gId;
+                  matchedDate = rDate;
+                  matchedRowIndex = i;
+                  break;
+                }
+              } else {
+                // Si es la semana actual, buscamos la que no tenga marcador registrado aún
+                const ptsLocal = row[5];
+                const ptsVisitante = row[6];
+                const isEmptyScore = !ptsLocal && !ptsVisitante;
+                
+                if (isEmptyScore) {
+                  matchedGameId = gId;
+                  matchedDate = rDate;
+                  matchedRowIndex = i;
+                  break;
+                }
               }
             }
           }
         }
         
-        if (matchedGameId) {
-          finalGameId = matchedGameId;
-          if (matchedDate) {
-            dateStr = matchedDate;
+        // Fallback: si no encontramos uno con marcador vacío para semana actual, tomamos la primera coincidencia del partido
+        if (!matchedGameId) {
+          for (let i = 0; i < inputRows.length; i++) {
+            const row = inputRows[i];
+            const gId = row[0];
+            const homeTeam = row[3];
+            const awayTeam = row[4];
+            if (gId && homeTeam && awayTeam) {
+              const normalizedHome = homeTeam.toLowerCase().trim();
+              const normalizedAway = awayTeam.toLowerCase().trim();
+              const matchesHome = scannedTeams.some(t => t.includes(normalizedHome) || normalizedHome.includes(t));
+              const matchesAway = scannedTeams.some(t => t.includes(normalizedAway) || normalizedAway.includes(t));
+              if (matchesHome && matchesAway) {
+                matchedGameId = gId;
+                matchedDate = row[2];
+                matchedRowIndex = i;
+                break;
+              }
+            }
           }
+        }
+
+        // Si encontramos el partido, actualizamos sus resultados en Resultados_Input
+        if (matchedRowIndex !== null && matchedRowIndex !== undefined) {
+          const rowNum = matchedRowIndex + 1;
+          const row = inputRows[matchedRowIndex];
+          const homeTeam = row[3];
+          const awayTeam = row[4];
+          
+          let homeScore = 0;
+          let awayScore = 0;
+          
+          const homeName = String(homeTeam).toLowerCase().trim();
+          const awayName = String(awayTeam).toLowerCase().trim();
+          
+          // Buscar en scores del payload
+          for (const [tName, val] of Object.entries(scores || {})) {
+            const normTName = tName.toLowerCase().trim();
+            if (normTName.includes(homeName) || homeName.includes(normTName)) {
+              homeScore = Number(val);
+            }
+            if (normTName.includes(awayName) || awayName.includes(normTName)) {
+              awayScore = Number(val);
+            }
+          }
+
+          if (isForfeit) {
+            const normWinnerName = String(winner).toLowerCase().trim();
+            if (normWinnerName.includes(homeName) || homeName.includes(normWinnerName)) {
+              homeScore = 20;
+              awayScore = 0;
+            } else {
+              homeScore = 0;
+              awayScore = 20;
+            }
+          }
+
+          const targetDate = fecha || matchedDate || dateStr;
+
+          // Escribir en Resultados_Input: Fecha (C), Equipo Local (D), Equipo Visitante (E), PTS Local (F), PTS Visitante (G), Ganador (H), Notas (I)
+          await sheets.spreadsheets.values.update({
+            spreadsheetId: SPREADSHEET_ID,
+            range: `Resultados_Input!C${rowNum}:I${rowNum}`,
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+              values: [
+                [
+                  targetDate,
+                  homeTeam,
+                  awayTeam,
+                  isForfeit ? homeScore : (homeScore || 0),
+                  isForfeit ? awayScore : (awayScore || 0),
+                  winner || "",
+                  isForfeit ? "forfait" : ""
+                ]
+              ]
+            }
+          });
+
+          finalGameId = matchedGameId || "BSN001";
+          dateStr = targetDate;
         } else {
           return NextResponse.json({ 
-            error: `No se encontró ningún juego registrado para ${scannedTeams.join(" vs ")} en la "${semana}" en la pestaña Resultados_Input. Por favor verifica que los nombres de los equipos coincidan con el calendario.` 
+            error: `No se encontró ningún juego registrado para ${scannedTeams.join(" vs ")} ${semana !== "Actual" ? `en la "${semana}"` : ""} en la pestaña Resultados_Input. Por favor verifica que los nombres de los equipos coincidan con el calendario.` 
           }, { status: 404 });
         }
+
       } catch (err: any) {
-        console.error("Error consultando Resultados_Input para juego histórico:", err);
-        return NextResponse.json({ error: "Error de servidor al buscar el juego histórico: " + err.message }, { status: 500 });
+        console.error("Error consultando/actualizando Resultados_Input:", err);
+        return NextResponse.json({ error: "Error de servidor al sincronizar Resultados_Input: " + err.message }, { status: 500 });
       }
     } else {
-      // Auto-incrementar Game ID
-      if (idRows.length > 1) {
-        const lastId = idRows[idRows.length - 1][0];
-        if (lastId && lastId.startsWith("BSN")) {
-          const numPart = parseInt(lastId.replace("BSN", ""), 10);
-          if (!isNaN(numPart)) {
-            finalGameId = `BSN${String(numPart + 1).padStart(3, '0')}`;
-          }
-        }
-      }
+      return NextResponse.json({ error: "No player stats found in request payload" }, { status: 400 });
     }
 
     // 1. SCOREBOARD -> Añadir nueva fila en GAME_PLAYER_STATS
