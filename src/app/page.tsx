@@ -624,7 +624,7 @@ export default function Home() {
     }
 
     const hasErrors = scannedData.some(p => !p.nameMatched);
-    if (hasErrors) {
+    if (hasErrors && destinations.individual) {
       alert(lang === 'en' ? "Please correct unmatched names before uploading." : "Por favor corrige los nombres no encontrados antes de subir.");
       return;
     }
@@ -791,7 +791,7 @@ export default function Home() {
     }
 
     const hasErrors = editingGameData.some(p => !p.nameMatched);
-    if (hasErrors) {
+    if (hasErrors && editingGameDestinations.individual) {
       alert(lang === 'en' ? "Please correct unmatched names before approving." : "Por favor corrige los nombres no encontrados antes de aprobar.");
       return;
     }
