@@ -1,0 +1,73 @@
+@import "tailwindcss";
+
+@theme inline {
+  --color-bsn-dark: #0f172a;
+  --color-bsn-black: #000000;
+  --color-bsn-blue: #1e3a8a;
+  --color-bsn-light-blue: #3b82f6;
+  --color-bsn-red: #ef4444;
+  --color-bsn-dark-red: #7f1d1d;
+  --color-bsn-neon: #38bdf8;
+  --color-background: #020617;
+  --color-foreground: #f8fafc;
+  --font-sans: 'Inter', sans-serif;
+  --animate-pulse-slow: pulse 3s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+@layer base {
+  body {
+    background-color: var(--color-background);
+    color: var(--color-foreground);
+    background-image: radial-gradient(circle at top right, #1e3a8a20, transparent 50%),
+                      radial-gradient(circle at bottom left, #7f1d1d20, transparent 50%);
+    background-attachment: fixed;
+    font-family: var(--font-sans);
+  }
+}
+
+@layer utilities {
+  .glass-panel {
+    @apply bg-black/40 backdrop-blur-md border border-white/10 rounded-xl shadow-xl;
+  }
+  .neon-border {
+    @apply border border-bsn-neon shadow-[0_0_10px_rgba(56,189,248,0.5)];
+  }
+  .metallic-red {
+    background: linear-gradient(135deg, #ef4444, #7f1d1d);
+    @apply border border-red-400/50 shadow-[0_4px_14px_0_rgba(239,68,68,0.39)];
+  }
+}
+
+/* Desactivar los botones de incremento/decremento nativos (spin buttons) de los inputs numéricos */
+input::-webkit-outer-spin-button,
+input::-webkit-inner-spin-button {
+  -webkit-appearance: none !important;
+  margin: 0 !important;
+}
+
+input[type="number"] {
+  -moz-appearance: textfield !important;
+  -webkit-appearance: none !important;
+  appearance: none !important;
+}
+
+/* Custom always-visible responsive sports scrollbar */
+.custom-scrollbar::-webkit-scrollbar {
+  height: 8px !important;
+  background: rgba(0, 0, 0, 0.4) !important;
+}
+
+.custom-scrollbar::-webkit-scrollbar-track {
+  background: rgba(255, 255, 255, 0.02) !important;
+  border-radius: 4px !important;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(56, 189, 248, 0.45) !important; /* bsn-neon with opacity */
+  border-radius: 4px !important;
+  border: 1px solid rgba(56, 189, 248, 0.1) !important;
+}
+
+.custom-scrollbar::-webkit-scrollbar-thumb:hover {
+  background: rgba(56, 189, 248, 0.75) !important;
+}
