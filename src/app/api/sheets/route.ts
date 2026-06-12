@@ -83,6 +83,53 @@ function cleanAndCompareDates(d1: string, d2: string): boolean {
   return false;
 }
 
+async function getNextGameId(sheets: any, spreadsheetId: string): Promise<string> {
+  let maxId = 0;
+  
+  // 1. Scan Resultados_Input
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "Resultados_Input!A:A",
+    });
+    const rows = res.data.values || [];
+    rows.forEach((row: any) => {
+      const val = row[0];
+      if (val && val.startsWith("BSN")) {
+        const num = parseInt(val.replace("BSN", ""), 10);
+        if (!isNaN(num) && num > maxId) {
+          maxId = num;
+        }
+      }
+    });
+  } catch (e) {
+    console.warn("Error reading Resultados_Input for next ID:", e);
+  }
+  
+  // 2. Scan GAME_PLAYER_STATS
+  try {
+    const res = await sheets.spreadsheets.values.get({
+      spreadsheetId,
+      range: "GAME_PLAYER_STATS!A:A",
+    });
+    const rows = res.data.values || [];
+    rows.forEach((row: any) => {
+      const val = row[0];
+      if (val && val.startsWith("BSN")) {
+        const num = parseInt(val.replace("BSN", ""), 10);
+        if (!isNaN(num) && num > maxId) {
+          maxId = num;
+        }
+      }
+    });
+  } catch (e) {
+    console.warn("Error reading GAME_PLAYER_STATS for next ID:", e);
+  }
+  
+  const nextNum = maxId + 1;
+  return `BSN${String(nextNum).padStart(3, "0")}`;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -300,35 +347,6 @@ export async function POST(req: NextRequest) {
           matchedDate = bestCandidateDate;
           matchedRowIndex = bestCandidateRowIndex;
         }
-        
-        // Fallback: si no hay ninguno vacío, tomar el más cercano de fecha global
-        if (!matchedGameId && bestOverallRowIndex !== null) {
-          matchedGameId = bestOverallGameId;
-          matchedDate = bestOverallDate;
-          matchedRowIndex = bestOverallRowIndex;
-        }
-
-        // Fallback absoluto por equipos (primera fila encontrada)
-        if (!matchedGameId) {
-          for (let i = 0; i < inputRows.length; i++) {
-            const row = inputRows[i];
-            const gId = row[0];
-            const homeTeam = row[3];
-            const awayTeam = row[4];
-            if (gId && homeTeam && awayTeam) {
-              const normalizedHome = homeTeam.toLowerCase().trim();
-              const normalizedAway = awayTeam.toLowerCase().trim();
-              const matchesHome = scannedTeams.some(t => t.includes(normalizedHome) || normalizedHome.includes(t));
-              const matchesAway = scannedTeams.some(t => t.includes(normalizedAway) || normalizedAway.includes(t));
-              if (matchesHome && matchesAway) {
-                matchedGameId = gId;
-                matchedDate = row[2];
-                matchedRowIndex = i;
-                break;
-              }
-            }
-          }
-        }
 
         // Si encontramos el partido, actualizamos sus resultados en Resultados_Input
         if (matchedRowIndex !== null && matchedRowIndex !== undefined) {
@@ -392,9 +410,64 @@ export async function POST(req: NextRequest) {
 
           dateStr = targetDate;
         } else {
-          return NextResponse.json({ 
-            error: `No se encontró ningún juego registrado para ${scannedTeams.join(" vs ")} ${semana !== "Actual" ? `en la "${semana}"` : ""} en la pestaña Resultados_Input. Por favor verifica que los nombres de los equipos coincidan con el calendario.` 
-          }, { status: 404 });
+          // Si no se encuentra ningún partido vacío ni coincidencia de fecha, se autogenera la fila
+          const nextGameId = await getNextGameId(sheets, SPREADSHEET_ID!);
+          finalGameId = nextGameId;
+          
+          const homeTeam = data[0]?.team || scannedTeams[0] || "Local";
+          const awayTeam = data.find((p: any) => p.team !== homeTeam)?.team || scannedTeams[1] || "Visitante";
+          
+          let homeScore = 0;
+          let awayScore = 0;
+          const homeName = String(homeTeam).toLowerCase().trim();
+          const awayName = String(awayTeam).toLowerCase().trim();
+          
+          for (const [tName, val] of Object.entries(scores || {})) {
+            const normTName = tName.toLowerCase().trim();
+            if (normTName.includes(homeName) || homeName.includes(normTName)) {
+              homeScore = Number(val);
+            }
+            if (normTName.includes(awayName) || awayName.includes(normTName)) {
+              awayScore = Number(val);
+            }
+          }
+
+          if (isForfeit) {
+            const normWinnerName = String(winner).toLowerCase().trim();
+            if (normWinnerName.includes(homeName) || homeName.includes(normWinnerName)) {
+              homeScore = 20;
+              awayScore = 0;
+            } else {
+              homeScore = 0;
+              awayScore = 20;
+            }
+          }
+
+          const targetDate = fecha || dateStr;
+          const targetSemana = semana && semana !== "Actual" ? semana : "Semana 13";
+
+          await sheets.spreadsheets.values.append({
+            spreadsheetId: SPREADSHEET_ID,
+            range: "Resultados_Input!A:I",
+            valueInputOption: "USER_ENTERED",
+            requestBody: {
+              values: [
+                [
+                  nextGameId,
+                  targetSemana,
+                  targetDate,
+                  homeTeam,
+                  awayTeam,
+                  isForfeit ? homeScore : (homeScore || 0),
+                  isForfeit ? awayScore : (awayScore || 0),
+                  winner || "",
+                  isForfeit ? "forfait" : "Autogenerado"
+                ]
+              ]
+            }
+          });
+
+          dateStr = targetDate;
         }
 
       } catch (err: any) {
