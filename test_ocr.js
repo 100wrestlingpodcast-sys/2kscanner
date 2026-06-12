@@ -1,54 +1,65 @@
-import { NextRequest, NextResponse } from "next/server";
-import OpenAI from "openai";
+const { OpenAI } = require('openai');
+const fs = require('fs');
+const path = require('path');
+require('dotenv').config({ path: './.env.local' });
 
-// Initialize OpenAI client
-const openai = new OpenAI({
-  apiKey: process.env.OPENAI_API_KEY,
-});
-
-export const maxDuration = 60; // Allow more time for Vision API
-
-export async function POST(req: NextRequest) {
+async function run() {
   try {
-    const { imageBase64, rosterPlayers, teams } = await req.json();
+    const openai = new OpenAI({
+      apiKey: process.env.OPENAI_API_KEY,
+    });
 
-    if (!imageBase64) {
-      return NextResponse.json(
-        { error: "No image provided" },
-        { status: 400 }
-      );
+    const imagePath = path.join(__dirname, 'public', 'cropped_debug.jpg');
+    if (!fs.existsSync(imagePath)) {
+      console.error("Image file does not exist at:", imagePath);
+      return;
     }
 
-    // Save image for debugging purposes
-    try {
-      const fs = require('fs');
-      const path = require('path');
-      const buffer = Buffer.from(imageBase64, 'base64');
-      fs.writeFileSync(path.join(process.cwd(), 'public', 'cropped_debug.jpg'), buffer);
-    } catch (e) {
-      console.warn("Could not save debug image:", e);
-    }
+    const imageBase64 = fs.readFileSync(imagePath).toString('base64');
+
+    // Get expected rosters and teams (from a mockup or the real sheet)
+    // To make it identical to what the app sends, let's look at what page.tsx does.
+    // In page.tsx:
+    // const res = await fetch("/api/scan", { imageBase64, rosterPlayers: validPlayers, teams: [team1, team2] })
+    // Let's first fetch valid players from Google Sheets so we have the real roster context
+    const { google } = require('googleapis');
+    const auth = new google.auth.GoogleAuth({
+      credentials: {
+        client_email: process.env.GOOGLE_SERVICE_ACCOUNT_EMAIL,
+        private_key: process.env.GOOGLE_PRIVATE_KEY?.replace(/\\n/g, "\n"),
+      },
+      scopes: ["https://www.googleapis.com/auth/spreadsheets"],
+    });
+    const sheets = google.sheets({ version: "v4", auth });
+    const sheetRes = await sheets.spreadsheets.values.get({
+      spreadsheetId: process.env.GOOGLE_SHEET_ID,
+      range: "Jugadores_lista!A:N",
+    });
+    const rows = sheetRes.data.values || [];
+    const parseDecimal = (val) => {
+      if (!val) return 0;
+      const normalized = val.trim().replace(",", ".");
+      const parsed = parseFloat(normalized);
+      return isNaN(parsed) ? 0 : parsed;
+    };
+    const rosterPlayers = rows
+      .slice(3)
+      .filter((row) => row[1])
+      .map((row) => ({
+        team: row[0] || "Desconocido",
+        name: row[1],
+      }));
+
+    console.log("Total roster players fetched:", rosterPlayers.length);
 
     let rosterContext = "";
-    if (rosterPlayers && Array.isArray(rosterPlayers) && rosterPlayers.length > 0) {
+    if (rosterPlayers.length > 0) {
       rosterContext = `\n\nEXPECTED ROSTER PLAYERS (For Reference & High Precision Matching):\n` +
-        rosterPlayers.map((p: any) => `- Username: "${p.name}" (Expected Team: "${p.team}")`).join("\n") +
+        rosterPlayers.map((p) => `- Username: "${p.name}" (Expected Team: "${p.team}")`).join("\n") +
         `\n\nUse this expected roster list to resolve and correct any slight spelling mistakes, special characters (like underscores, dashes), or OCR noise in the Player column. If a player row in the box score matches one of these expected usernames, map it to that username. If a player in the box score is NOT in this roster list, still extract and transcribe it exactly as it appears in the image (do not ignore them).`;
     }
 
-    let teamsContext = "";
-    if (teams && Array.isArray(teams) && teams.length > 0) {
-      teamsContext = `\n\nEXPECTED TEAMS:\n` +
-        teams.map((t: any) => `- "${t}"`).join("\n") +
-        `\n\nAssign each transcribed player to one of these expected teams based on which section/header of the box score they belong to.`;
-    }
-
-    const response = await openai.chat.completions.create({
-      model: "gpt-4o",
-      messages: [
-        {
-          role: "system",
-          content: `You are an advanced Spatial Vision OCR AI specialized in basketball box scores from NBA 2K.
+    const prompt = `You are an advanced Spatial Vision OCR AI specialized in basketball box scores from NBA 2K.
 Your objective is to read the attached scoreboard image and transcribe statistics for every player row with absolute columns alignment.
 
 CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
@@ -81,7 +92,7 @@ CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
    - If team headers are NOT visible in the image (e.g. if the image is cropped or only shows the box score rows), look at the EXPECTED ROSTER PLAYERS list to see which team the player belongs to (for example, if you match the player to "BubaluRD-_-023", assign them to team "Criollos").
    - If a player is not in the expected roster, assign them to the same team as the other players in their 5-player section.
 
-${rosterContext}${teamsContext}
+${rosterContext}
 
 Output MUST be ONLY a raw JSON array of objects, with no markdown formatting (\`\`\`json) and no extra text.
 JSON Structure per Player:
@@ -98,7 +109,15 @@ JSON Structure per Player:
     "tpm_tpa": "0/2" (or null),
     "low_confidence": false (or true if any value was doubtful, blurry, or misaligned)
   }
-]`,
+]`;
+
+    console.log("Calling OpenAI vision API...");
+    const response = await openai.chat.completions.create({
+      model: "gpt-4o",
+      messages: [
+        {
+          role: "system",
+          content: prompt,
         },
         {
           role: "user",
@@ -121,71 +140,12 @@ JSON Structure per Player:
     });
 
     const aiContent = response.choices[0]?.message?.content;
-    
-    if (!aiContent) {
-      throw new Error("Empty response from OpenAI");
-    }
+    console.log("\n--- RAW AI RESPONSE ---");
+    console.log(aiContent);
+    console.log("-----------------------\n");
 
-    // Clean up potential markdown formatting if the AI disobeys
-    const cleanJson = aiContent.replace(/```json/g, "").replace(/```/g, "").trim();
-    
-    const parsedData = JSON.parse(cleanJson);
-
-    // Process the raw transcribed columns programmatically in the backend
-    const processedData = parsedData.map((player: any) => {
-      // Split FGM/FGA (e.g. "7/14" or "7-14")
-      let fgm: number | "" = "";
-      let fga: number | "" = "";
-      if (player.fgm_fga) {
-        const parts = String(player.fgm_fga).split(/[/\-]/);
-        fgm = parseInt(parts[0], 10);
-        if (isNaN(fgm)) fgm = "";
-        fga = parseInt(parts[1], 10);
-        if (isNaN(fga)) fga = "";
-      }
-      
-      // Split 3PM/3PA (e.g. "3/6" or "3-6")
-      let tpm: number | "" = "";
-      let tpa: number | "" = "";
-      if (player.tpm_tpa) {
-        const parts = String(player.tpm_tpa).split(/[/\-]/);
-        tpm = parseInt(parts[0], 10);
-        if (isNaN(tpm)) tpm = "";
-        tpa = parseInt(parts[1], 10);
-        if (isNaN(tpa)) tpa = "";
-      }
-
-      // Convert all numeric values safely
-      const parseVal = (val: any) => {
-        if (val === null || val === undefined || val === "") return "";
-        const parsed = parseInt(String(val), 10);
-        return isNaN(parsed) ? "" : parsed;
-      };
-
-      return {
-        username: player.username || "",
-        team: player.team || "",
-        pts: parseVal(player.pts),
-        reb: parseVal(player.reb),
-        ast: parseVal(player.ast),
-        stl: parseVal(player.stl),
-        blk: parseVal(player.blk),
-        to: "", // Deprecated/ignored, kept empty for schema compatibility
-        fouls: "", // Deprecated/ignored, kept empty for schema compatibility
-        fgm,
-        fga,
-        tpm,
-        tpa,
-        low_confidence: player.low_confidence === true
-      };
-    });
-
-    return NextResponse.json({ success: true, data: processedData });
-  } catch (error: any) {
-    console.error("OCR API Error:", error);
-    return NextResponse.json(
-      { error: error.message || "Failed to process image" },
-      { status: 500 }
-    );
+  } catch (error) {
+    console.error("ERROR:", error.message);
   }
 }
+run();
