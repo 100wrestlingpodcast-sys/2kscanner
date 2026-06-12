@@ -518,6 +518,27 @@ export default function Home() {
     return "";
   };
 
+  const getLevenshteinDistance = (a: string, b: string): number => {
+    const tmp: number[][] = [];
+    let i: number, j: number;
+    for (i = 0; i <= a.length; i++) {
+      tmp[i] = [i];
+    }
+    for (j = 0; j <= b.length; j++) {
+      tmp[0][j] = j;
+    }
+    for (i = 1; i <= a.length; i++) {
+      for (j = 1; j <= b.length; j++) {
+        tmp[i][j] = Math.min(
+          tmp[i - 1][j] + 1, // deletion
+          tmp[i][j - 1] + 1, // insertion
+          tmp[i - 1][j - 1] + (a[i - 1] === b[j - 1] ? 0 : 1) // substitution
+        );
+      }
+    }
+    return tmp[a.length][b.length];
+  };
+
   const findClosestPlayer = (rawUsername: string, rawTeam: string, playersList: ValidPlayer[]) => {
     if (!rawUsername) return undefined;
     const normRawUser = rawUsername.toLowerCase().replace(/[^a-z0-9]/g, "");
@@ -529,18 +550,52 @@ export default function Home() {
       return normRawTeam.includes(normPlayerTeam) || normPlayerTeam.includes(normRawTeam);
     });
     
-    const matchInTeam = sameTeamPlayers.find(p => {
+    // 1. Coincidencia exacta de username limpio en el mismo equipo
+    const matchInTeamExact = sameTeamPlayers.find(p => {
       const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
       return normRawUser === normPName;
     });
-    if (matchInTeam) return matchInTeam;
+    if (matchInTeamExact) return matchInTeamExact;
     
-    // Buscar globalmente por si la IA detectó mal el equipo
-    const matchGlobal = playersList.find(p => {
+    // 2. Fuzzy match en el mismo equipo (Levenshtein)
+    let bestMatchInTeam: ValidPlayer | undefined = undefined;
+    let minDistanceInTeam = Infinity;
+    
+    sameTeamPlayers.forEach(p => {
+      const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const distance = getLevenshteinDistance(normRawUser, normPName);
+      // Permitir una tolerancia de diferencia basada en la longitud
+      const maxTolerated = Math.max(2, Math.floor(normPName.length * 0.35));
+      if (distance <= maxTolerated && distance < minDistanceInTeam) {
+        minDistanceInTeam = distance;
+        bestMatchInTeam = p;
+      }
+    });
+    
+    if (bestMatchInTeam) return bestMatchInTeam;
+    
+    // 3. Coincidencia exacta global
+    const matchGlobalExact = playersList.find(p => {
       const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
       return normRawUser === normPName;
     });
-    return matchGlobal;
+    if (matchGlobalExact) return matchGlobalExact;
+    
+    // 4. Fuzzy match global
+    let bestMatchGlobal: ValidPlayer | undefined = undefined;
+    let minDistanceGlobal = Infinity;
+    
+    playersList.forEach(p => {
+      const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
+      const distance = getLevenshteinDistance(normRawUser, normPName);
+      const maxTolerated = Math.max(2, Math.floor(normPName.length * 0.35));
+      if (distance <= maxTolerated && distance < minDistanceGlobal) {
+        minDistanceGlobal = distance;
+        bestMatchGlobal = p;
+      }
+    });
+    
+    return bestMatchGlobal;
   };
 
   const handleImageSelected = async (file: File) => {

@@ -13,6 +13,76 @@ const auth = new google.auth.GoogleAuth({
 const sheets = google.sheets({ version: "v4", auth });
 const SPREADSHEET_ID = process.env.GOOGLE_SHEET_ID;
 
+// Helper functions for date normalization and parsing
+function parseSheetDate(dateStr: string): Date | null {
+  if (!dateStr) return null;
+  const clean = dateStr.trim().replace(/[-.]/g, "/");
+  const parts = clean.split("/");
+  if (parts.length === 3) {
+    const p1 = parseInt(parts[0], 10);
+    const p2 = parseInt(parts[1], 10);
+    const p3 = parseInt(parts[2], 10);
+    const year = p3 < 100 ? 2000 + p3 : p3;
+    
+    // Season heuristic: BSN 2K league games happen between March (3) and August (8)
+    const isInsideSeason = (m: number) => m >= 3 && m <= 8;
+    
+    let month = p1;
+    let day = p2;
+    
+    if (isInsideSeason(p1) && !isInsideSeason(p2)) {
+      month = p1;
+      day = p2;
+    } else if (!isInsideSeason(p1) && isInsideSeason(p2)) {
+      month = p2;
+      day = p1;
+    } else {
+      // Default to MM/DD/YYYY if ambiguous or both are valid
+      month = p1;
+      day = p2;
+    }
+    
+    return new Date(year, month - 1, day);
+  }
+  
+  if (/^\d{4}-\d{2}-\d{2}$/.test(clean)) {
+    return new Date(clean);
+  }
+  
+  return null;
+}
+
+function cleanAndCompareDates(d1: string, d2: string): boolean {
+  if (!d1 || !d2) return false;
+  const clean1 = d1.trim().replace(/[-.]/g, "/");
+  const clean2 = d2.trim().replace(/[-.]/g, "/");
+  if (clean1 === clean2) return true;
+  
+  const p1 = clean1.split("/");
+  const p2 = clean2.split("/");
+  
+  if (p1.length === 3 && p2.length === 3) {
+    const day1 = parseInt(p1[0], 10);
+    const month1 = parseInt(p1[1], 10);
+    const year1 = parseInt(p1[2], 10);
+    
+    const day2 = parseInt(p2[0], 10);
+    const month2 = parseInt(p2[1], 10);
+    const year2 = parseInt(p2[2], 10);
+    
+    const y1 = year1 < 100 ? 2000 + year1 : year1;
+    const y2 = year2 < 100 ? 2000 + year2 : year2;
+    
+    if (y1 !== y2) return false;
+    
+    const matchSame = (day1 === day2 && month1 === month2);
+    const matchFlipped = (day1 === month2 && month1 === day2);
+    
+    return matchSame || matchFlipped;
+  }
+  return false;
+}
+
 export async function GET(req: NextRequest) {
   try {
     const { searchParams } = new URL(req.url);
@@ -147,9 +217,17 @@ export async function POST(req: NextRequest) {
         });
         const inputRows = resInput.data.values || [];
         
-        let candidateGameId: string | null = null;
-        let candidateDate: string | null = null;
-        let candidateRowIndex: number | null = null;
+        const targetDateObj = parseSheetDate(fecha) || new Date();
+        
+        let bestCandidateRowIndex: number | null = null;
+        let minDiffMs = Infinity;
+        let bestCandidateGameId: string | null = null;
+        let bestCandidateDate: string | null = null;
+
+        let bestOverallRowIndex: number | null = null;
+        let minOverallDiffMs = Infinity;
+        let bestOverallGameId: string | null = null;
+        let bestOverallDate: string | null = null;
 
         for (let i = 0; i < inputRows.length; i++) {
           const row = inputRows[i];
@@ -177,8 +255,8 @@ export async function POST(req: NextRequest) {
                 }
               } else {
                 // Modo "Actual":
-                // 1. Si coincide la fecha exacta (si viene en el payload), es nuestro juego prioritario
-                const isSameDate = fecha && rDate && (rDate.trim() === fecha.trim());
+                // 1. Si coincide la fecha exacta (coincidencia robusta), es nuestro juego prioritario
+                const isSameDate = cleanAndCompareDates(rDate, fecha);
                 if (isSameDate) {
                   matchedGameId = gId;
                   matchedDate = rDate;
@@ -186,29 +264,51 @@ export async function POST(req: NextRequest) {
                   break;
                 }
                 
-                // 2. Si no coincide la fecha pero el marcador está vacío, guardamos como candidato viable
-                const ptsLocal = row[5];
-                const ptsVisitante = row[6];
-                const isEmptyScore = !ptsLocal && !ptsVisitante;
-                
-                if (isEmptyScore && candidateRowIndex === null) {
-                  candidateGameId = gId;
-                  candidateDate = rDate;
-                  candidateRowIndex = i;
+                // 2. Si no coincide exactamente, calculamos distancia de fecha
+                const scheduledDateObj = parseSheetDate(rDate);
+                if (scheduledDateObj) {
+                  const diffMs = Math.abs(targetDateObj.getTime() - scheduledDateObj.getTime());
+                  
+                  // Candidato viable: marcador vacío
+                  const ptsLocal = row[5];
+                  const ptsVisitante = row[6];
+                  const isEmptyScore = !ptsLocal && !ptsVisitante;
+                  
+                  if (isEmptyScore && diffMs < minDiffMs) {
+                    minDiffMs = diffMs;
+                    bestCandidateGameId = gId;
+                    bestCandidateDate = rDate;
+                    bestCandidateRowIndex = i;
+                  }
+
+                  // Candidato global (por si todos los partidos tienen marcador, seleccionamos el más cercano)
+                  if (diffMs < minOverallDiffMs) {
+                    minOverallDiffMs = diffMs;
+                    bestOverallGameId = gId;
+                    bestOverallDate = rDate;
+                    bestOverallRowIndex = i;
+                  }
                 }
               }
             }
           }
         }
 
-        // Si no hubo coincidencia exacta de fecha para la semana actual, usar el candidato vacío
-        if (!matchedGameId && candidateRowIndex !== null) {
-          matchedGameId = candidateGameId;
-          matchedDate = candidateDate;
-          matchedRowIndex = candidateRowIndex;
+        // Si no hubo coincidencia exacta de fecha para la semana actual, usar el candidato vacío más cercano
+        if (!matchedGameId && bestCandidateRowIndex !== null) {
+          matchedGameId = bestCandidateGameId;
+          matchedDate = bestCandidateDate;
+          matchedRowIndex = bestCandidateRowIndex;
         }
         
-        // Fallback: si no encontramos uno con marcador vacío para semana actual, tomamos la primera coincidencia del partido
+        // Fallback: si no hay ninguno vacío, tomar el más cercano de fecha global
+        if (!matchedGameId && bestOverallRowIndex !== null) {
+          matchedGameId = bestOverallGameId;
+          matchedDate = bestOverallDate;
+          matchedRowIndex = bestOverallRowIndex;
+        }
+
+        // Fallback absoluto por equipos (primera fila encontrada)
         if (!matchedGameId) {
           for (let i = 0; i < inputRows.length; i++) {
             const row = inputRows[i];
