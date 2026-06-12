@@ -147,6 +147,10 @@ export async function POST(req: NextRequest) {
         });
         const inputRows = resInput.data.values || [];
         
+        let candidateGameId: string | null = null;
+        let candidateDate: string | null = null;
+        let candidateRowIndex: number | null = null;
+
         for (let i = 0; i < inputRows.length; i++) {
           const row = inputRows[i];
           const gId = row[0];
@@ -172,20 +176,36 @@ export async function POST(req: NextRequest) {
                   break;
                 }
               } else {
-                // Si es la semana actual, buscamos la que no tenga marcador registrado aún
-                const ptsLocal = row[5];
-                const ptsVisitante = row[6];
-                const isEmptyScore = !ptsLocal && !ptsVisitante;
-                
-                if (isEmptyScore) {
+                // Modo "Actual":
+                // 1. Si coincide la fecha exacta (si viene en el payload), es nuestro juego prioritario
+                const isSameDate = fecha && rDate && (rDate.trim() === fecha.trim());
+                if (isSameDate) {
                   matchedGameId = gId;
                   matchedDate = rDate;
                   matchedRowIndex = i;
                   break;
                 }
+                
+                // 2. Si no coincide la fecha pero el marcador está vacío, guardamos como candidato viable
+                const ptsLocal = row[5];
+                const ptsVisitante = row[6];
+                const isEmptyScore = !ptsLocal && !ptsVisitante;
+                
+                if (isEmptyScore && candidateRowIndex === null) {
+                  candidateGameId = gId;
+                  candidateDate = rDate;
+                  candidateRowIndex = i;
+                }
               }
             }
           }
+        }
+
+        // Si no hubo coincidencia exacta de fecha para la semana actual, usar el candidato vacío
+        if (!matchedGameId && candidateRowIndex !== null) {
+          matchedGameId = candidateGameId;
+          matchedDate = candidateDate;
+          matchedRowIndex = candidateRowIndex;
         }
         
         // Fallback: si no encontramos uno con marcador vacío para semana actual, tomamos la primera coincidencia del partido
