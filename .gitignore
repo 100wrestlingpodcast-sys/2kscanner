@@ -39,7 +39,3 @@ yarn-error.log*
 # typescript
 *.tsbuildinfo
 next-env.d.ts
-
-# Backups / large directories
-/app-scanner-2k
-/app-scanner-2k-heavy

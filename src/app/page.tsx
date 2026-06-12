@@ -168,11 +168,6 @@ export default function Home() {
   const [editingGameWinner, setEditingGameWinner] = useState<string>("");
   const [editingGameIsForfeit, setEditingGameIsForfeit] = useState<boolean>(false);
 
-  const [gameTeamA, setGameTeamA] = useState<string>("");
-  const [gameTeamB, setGameTeamB] = useState<string>("");
-  const [editingGameTeamA, setEditingGameTeamA] = useState<string>("");
-  const [editingGameTeamB, setEditingGameTeamB] = useState<string>("");
-
   // Date Conversion Helpers
   const convertInputDateToSheetFormat = (dateStr: string): string => {
     if (!dateStr) return "";
@@ -200,16 +195,16 @@ export default function Home() {
   const handleToggleForfeit = (checked: boolean) => {
     setIsForfeit(checked);
     if (checked) {
-      const currentWinner = selectedWinner || gameTeamA || "";
+      const teams = Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean);
+      const currentWinner = selectedWinner || teams[0] || "";
       const newScores: Record<string, number> = {};
-      if (gameTeamA) newScores[gameTeamA] = (gameTeamA === currentWinner) ? 20 : 0;
-      if (gameTeamB) newScores[gameTeamB] = (gameTeamB === currentWinner) ? 20 : 0;
+      teams.forEach(t => {
+        newScores[t] = (t === currentWinner) ? 20 : 0;
+      });
       setCustomScores(newScores);
     } else {
       // Recalculate from scannedData
       const newScores: Record<string, number> = {};
-      if (gameTeamA) newScores[gameTeamA] = 0;
-      if (gameTeamB) newScores[gameTeamB] = 0;
       scannedData.forEach(p => {
         if (!p.team) return;
         const ptsNum = p.pts === "" ? 0 : Number(p.pts);
@@ -217,9 +212,12 @@ export default function Home() {
       });
       setCustomScores(newScores);
       
-      if (gameTeamA && gameTeamB) {
-        const winner = Number(newScores[gameTeamA] || 0) > Number(newScores[gameTeamB] || 0) ? gameTeamA : gameTeamB;
+      const teams = Object.keys(newScores);
+      if (teams.length >= 2) {
+        const winner = Number(newScores[teams[0]]) > Number(newScores[teams[1]]) ? teams[0] : teams[1];
         setSelectedWinner(winner);
+      } else if (teams.length === 1) {
+        setSelectedWinner(teams[0]);
       }
     }
   };
@@ -227,9 +225,11 @@ export default function Home() {
   const handleWinnerChange = (winnerName: string) => {
     setSelectedWinner(winnerName);
     if (isForfeit) {
+      const teams = Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean);
       const newScores: Record<string, number> = {};
-      if (gameTeamA) newScores[gameTeamA] = (gameTeamA === winnerName) ? 20 : 0;
-      if (gameTeamB) newScores[gameTeamB] = (gameTeamB === winnerName) ? 20 : 0;
+      teams.forEach(t => {
+        newScores[t] = (t === winnerName) ? 20 : 0;
+      });
       setCustomScores(newScores);
     }
   };
@@ -237,16 +237,16 @@ export default function Home() {
   const handleEditingToggleForfeit = (checked: boolean) => {
     setEditingGameIsForfeit(checked);
     if (checked) {
-      const currentWinner = editingGameWinner || editingGameTeamA || "";
+      const teams = Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean);
+      const currentWinner = editingGameWinner || teams[0] || "";
       const newScores: Record<string, number> = {};
-      if (editingGameTeamA) newScores[editingGameTeamA] = (editingGameTeamA === currentWinner) ? 20 : 0;
-      if (editingGameTeamB) newScores[editingGameTeamB] = (editingGameTeamB === currentWinner) ? 20 : 0;
+      teams.forEach(t => {
+        newScores[t] = (t === currentWinner) ? 20 : 0;
+      });
       setEditingGameScores(newScores);
     } else {
       // Recalculate from editingGameData
       const newScores: Record<string, number> = {};
-      if (editingGameTeamA) newScores[editingGameTeamA] = 0;
-      if (editingGameTeamB) newScores[editingGameTeamB] = 0;
       editingGameData.forEach(p => {
         if (!p.team) return;
         const ptsNum = p.pts === "" ? 0 : Number(p.pts);
@@ -254,9 +254,12 @@ export default function Home() {
       });
       setEditingGameScores(newScores);
       
-      if (editingGameTeamA && editingGameTeamB) {
-        const winner = Number(newScores[editingGameTeamA] || 0) > Number(newScores[editingGameTeamB] || 0) ? editingGameTeamA : editingGameTeamB;
+      const teams = Object.keys(newScores);
+      if (teams.length >= 2) {
+        const winner = Number(newScores[teams[0]]) > Number(newScores[teams[1]]) ? teams[0] : teams[1];
         setEditingGameWinner(winner);
+      } else if (teams.length === 1) {
+        setEditingGameWinner(teams[0]);
       }
     }
   };
@@ -264,114 +267,12 @@ export default function Home() {
   const handleEditingWinnerChange = (winnerName: string) => {
     setEditingGameWinner(winnerName);
     if (editingGameIsForfeit) {
+      const teams = Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean);
       const newScores: Record<string, number> = {};
-      if (editingGameTeamA) newScores[editingGameTeamA] = (editingGameTeamA === winnerName) ? 20 : 0;
-      if (editingGameTeamB) newScores[editingGameTeamB] = (editingGameTeamB === winnerName) ? 20 : 0;
+      teams.forEach(t => {
+        newScores[t] = (t === winnerName) ? 20 : 0;
+      });
       setEditingGameScores(newScores);
-    }
-  };
-
-  const handleGameTeamAChange = (newTeamName: string) => {
-    const oldTeam = gameTeamA;
-    setGameTeamA(newTeamName);
-    
-    setScannedData(prev => prev.map(p => {
-      if (p.team === oldTeam || p.team === "") {
-        return { ...p, team: newTeamName };
-      }
-      return p;
-    }));
-
-    setCustomScores(prev => {
-      const updated = { ...prev };
-      updated[newTeamName] = updated[oldTeam] ?? 0;
-      delete updated[oldTeam];
-      return updated;
-    });
-
-    if (selectedWinner === oldTeam) {
-      setSelectedWinner(newTeamName);
-    }
-  };
-
-  const handleGameTeamBChange = (newTeamName: string) => {
-    const oldTeam = gameTeamB;
-    setGameTeamB(newTeamName);
-    
-    setScannedData(prev => prev.map(p => {
-      if (p.team === oldTeam) {
-        return { ...p, team: newTeamName };
-      }
-      return p;
-    }));
-
-    setCustomScores(prev => {
-      const updated = { ...prev };
-      updated[newTeamName] = updated[oldTeam] ?? 0;
-      delete updated[oldTeam];
-      return updated;
-    });
-
-    if (selectedWinner === oldTeam) {
-      setSelectedWinner(newTeamName);
-    }
-  };
-
-  const handleEditingGameTeamAChange = (newTeamName: string) => {
-    const oldTeam = editingGameTeamA;
-    setEditingGameTeamA(newTeamName);
-    
-    setEditingGameData(prev => prev.map(p => {
-      if (p.team === oldTeam || p.team === "") {
-        const updated = { ...p, team: newTeamName };
-        const matchedPlayer = validPlayers.find(
-          (vp) => vp.name.trim().toLowerCase() === updated.username.trim().toLowerCase() && 
-                  vp.team.trim().toLowerCase() === updated.team.trim().toLowerCase()
-        );
-        updated.nameMatched = !!matchedPlayer;
-        return updated;
-      }
-      return p;
-    }));
-
-    setEditingGameScores(prev => {
-      const updated = { ...prev };
-      updated[newTeamName] = updated[oldTeam] ?? 0;
-      delete updated[oldTeam];
-      return updated;
-    });
-
-    if (editingGameWinner === oldTeam) {
-      setEditingGameWinner(newTeamName);
-    }
-  };
-
-  const handleEditingGameTeamBChange = (newTeamName: string) => {
-    const oldTeam = editingGameTeamB;
-    setEditingGameTeamB(newTeamName);
-    
-    setEditingGameData(prev => prev.map(p => {
-      if (p.team === oldTeam) {
-        const updated = { ...p, team: newTeamName };
-        const matchedPlayer = validPlayers.find(
-          (vp) => vp.name.trim().toLowerCase() === updated.username.trim().toLowerCase() && 
-                  vp.team.trim().toLowerCase() === updated.team.trim().toLowerCase()
-        );
-        updated.nameMatched = !!matchedPlayer;
-        return updated;
-      }
-      return p;
-    }));
-
-    setEditingGameScores(prev => {
-      const updated = { ...prev };
-      updated[newTeamName] = updated[oldTeam] ?? 0;
-      delete updated[oldTeam];
-      return updated;
-    });
-
-    if (editingGameWinner === oldTeam) {
-      setEditingGameWinner(newTeamName);
     }
   };
 
@@ -573,36 +474,6 @@ export default function Home() {
     localStorage.setItem("bsn_captain_profile", JSON.stringify(updated));
   };
 
-  const getLevenshteinDistance = (a: string, b: string): number => {
-    const matrix: number[][] = [];
-    for (let i = 0; i <= b.length; i++) {
-      matrix[i] = [i];
-    }
-    for (let j = 0; j <= a.length; j++) {
-      matrix[0][j] = j;
-    }
-    for (let i = 1; i <= b.length; i++) {
-      for (let j = 1; j <= a.length; j++) {
-        if (b.charAt(i - 1) === a.charAt(j - 1)) {
-          matrix[i][j] = matrix[i - 1][j - 1];
-        } else {
-          matrix[i][j] = Math.min(
-            matrix[i - 1][j - 1] + 1, // substitution
-            matrix[i][j - 1] + 1,     // insertion
-            matrix[i - 1][j] + 1      // deletion
-          );
-        }
-      }
-    }
-    return matrix[b.length][a.length];
-  };
-
-  const getSimilarity = (a: string, b: string): number => {
-    const maxLength = Math.max(a.length, b.length);
-    if (maxLength === 0) return 1.0;
-    return 1.0 - getLevenshteinDistance(a, b) / maxLength;
-  };
-
   const findClosestTeam = (rawTeam: string, teamsList: string[]): string => {
     if (!rawTeam) return "";
     const normalizedRaw = rawTeam.toLowerCase().trim();
@@ -643,18 +514,6 @@ export default function Home() {
         if (match) return match;
       }
     }
-
-    // 4. Coincidencia difusa (Fuzzy match)
-    let bestTeam = "";
-    let maxTeamSim = 0;
-    teamsList.forEach(t => {
-      const sim = getSimilarity(normalizedRaw, t.toLowerCase().trim());
-      if (sim > maxTeamSim) {
-        maxTeamSim = sim;
-        bestTeam = t;
-      }
-    });
-    if (maxTeamSim >= 0.70) return bestTeam;
     
     return "";
   };
@@ -681,35 +540,7 @@ export default function Home() {
       const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
       return normRawUser === normPName;
     });
-    if (matchGlobal) return matchGlobal;
-
-    // Búsqueda difusa dentro del equipo
-    let bestTeamPlayer: ValidPlayer | undefined = undefined;
-    let maxTeamPlayerSim = 0;
-    sameTeamPlayers.forEach(p => {
-      const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const sim = getSimilarity(normRawUser, normPName);
-      if (sim > maxTeamPlayerSim) {
-        maxTeamPlayerSim = sim;
-        bestTeamPlayer = p;
-      }
-    });
-    if (maxTeamPlayerSim >= 0.70) return bestTeamPlayer;
-
-    // Búsqueda difusa global
-    let bestGlobalPlayer: ValidPlayer | undefined = undefined;
-    let maxGlobalPlayerSim = 0;
-    playersList.forEach(p => {
-      const normPName = p.name.toLowerCase().replace(/[^a-z0-9]/g, "");
-      const sim = getSimilarity(normRawUser, normPName);
-      if (sim > maxGlobalPlayerSim) {
-        maxGlobalPlayerSim = sim;
-        bestGlobalPlayer = p;
-      }
-    });
-    if (maxGlobalPlayerSim >= 0.70) return bestGlobalPlayer;
-
-    return undefined;
+    return matchGlobal;
   };
 
   const handleImageSelected = async (file: File) => {
@@ -760,11 +591,11 @@ export default function Home() {
         return;
       }
 
-      const uniqueTeamsList = Array.from(new Set(validPlayers.map(p => p.team))).sort();
-
       const processedData = scanData.data.map((player: any, index: number) => {
         const rawUsername = player.username?.trim() || "";
         const rawTeam = player.team?.trim() || "";
+        
+        const uniqueTeamsList = Array.from(new Set(validPlayers.map(p => p.team))).sort();
         
         const matchedPlayer = findClosestPlayer(rawUsername, rawTeam, validPlayers);
         const matchedTeamName = matchedPlayer 
@@ -791,44 +622,10 @@ export default function Home() {
         };
       });
 
-      // Analyze which two teams are in play based on frequency
-      const teamCounts: Record<string, number> = {};
-      processedData.forEach((p: any) => {
-        if (p.team) {
-          teamCounts[p.team] = (teamCounts[p.team] || 0) + 1;
-        }
-      });
-      const sortedDetectedTeams = Object.keys(teamCounts).sort((a, b) => teamCounts[b] - teamCounts[a]);
-      
-      let tA = sortedDetectedTeams[0] || activeTeam || uniqueTeamsList[0] || "";
-      let tB = sortedDetectedTeams[1] || "";
-      
-      if (!tB && uniqueTeamsList.length > 0) {
-        tB = uniqueTeamsList.find(t => t !== tA) || uniqueTeamsList[0] || "";
-      }
-      
-      setGameTeamA(tA);
-      setGameTeamB(tB);
-
-      // Clean up player row teams so they only match tA or tB (or default to tA)
-      processedData.forEach((p: any) => {
-        if (p.team !== tA && p.team !== tB) {
-          if (p.team) {
-            const simA = getSimilarity(p.team.toLowerCase(), tA.toLowerCase());
-            const simB = getSimilarity(p.team.toLowerCase(), tB.toLowerCase());
-            p.team = simA >= simB ? tA : tB;
-          } else {
-            p.team = tA;
-          }
-        }
-      });
-
       setScannedData(processedData);
       
       // Calculate initial scores & winner
       const initialScores: Record<string, number> = {};
-      initialScores[tA] = 0;
-      initialScores[tB] = 0;
       processedData.forEach((p: any) => {
         if (!p.team) return;
         const ptsNum = p.pts === "" ? 0 : Number(p.pts);
@@ -836,8 +633,13 @@ export default function Home() {
       });
       setCustomScores(initialScores);
       
-      const winner = Number(initialScores[tA] || 0) > Number(initialScores[tB] || 0) ? tA : tB;
-      setSelectedWinner(winner);
+      const teams = Object.keys(initialScores);
+      if (teams.length >= 2) {
+        const winner = Number(initialScores[teams[0]]) > Number(initialScores[teams[1]]) ? teams[0] : teams[1];
+        setSelectedWinner(winner);
+      } else if (teams.length === 1) {
+        setSelectedWinner(teams[0]);
+      }
       setIsForfeit(false);
 
       setIsScanning(false);
@@ -850,18 +652,11 @@ export default function Home() {
   };
 
   const handleManualMode = () => {
-    const uniqueTeamsList = Array.from(new Set(validPlayers.map(p => p.team))).sort();
-    let tA = activeTeam || uniqueTeamsList[0] || "";
-    let tB = uniqueTeamsList.find(t => t !== tA) || uniqueTeamsList[1] || uniqueTeamsList[0] || "";
-    
-    setGameTeamA(tA);
-    setGameTeamB(tB);
-
     setScannedData([
       {
         id: String(Date.now()),
         username: "",
-        team: tA,
+        team: activeTeam || (validPlayers[0]?.team || ""),
         pts: "",
         reb: "",
         ast: "",
@@ -876,8 +671,8 @@ export default function Home() {
         nameMatched: false
       }
     ]);
-    setCustomScores({ [tA]: 0, [tB]: 0 });
-    setSelectedWinner(tA);
+    setCustomScores({});
+    setSelectedWinner("");
     setIsForfeit(false);
     setIsReviewing(true);
   };
@@ -1819,25 +1614,6 @@ export default function Home() {
                                   setEditingGameData(game.data);
                                   setEditingGameDestinations(game.destinations || { scoreboard: true, individual: true });
                                   
-                                  const uniqueTeamsList = Array.from(new Set(validPlayers.map(p => p.team))).sort();
-                                  const teamCounts: Record<string, number> = {};
-                                  game.data.forEach((p: any) => {
-                                    if (p.team) {
-                                      teamCounts[p.team] = (teamCounts[p.team] || 0) + 1;
-                                    }
-                                  });
-                                  const sortedDetected = Object.keys(teamCounts).sort((a, b) => teamCounts[b] - teamCounts[a]);
-                                  
-                                  let tA = sortedDetected[0] || game.team || uniqueTeamsList[0] || "";
-                                  let tB = sortedDetected[1] || "";
-                                  
-                                  if (!tB && uniqueTeamsList.length > 0) {
-                                    tB = uniqueTeamsList.find(t => t !== tA) || uniqueTeamsList[0] || "";
-                                  }
-                                  
-                                  setEditingGameTeamA(tA);
-                                  setEditingGameTeamB(tB);
-
                                   let initialScores = game.scores || {};
                                   let initialWinner = game.winner || "";
                                   if (Object.keys(initialScores).length === 0) {
@@ -1932,40 +1708,6 @@ export default function Home() {
                                   </label>
                                 </div>
 
-                                {/* Selectores de Equipos para Admin */}
-                                <div className="grid grid-cols-2 gap-3 border-b border-white/5 pb-3">
-                                  <div className="flex flex-col">
-                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">
-                                      {lang === 'en' ? 'Team A (Home)' : 'Equipo A (Local)'}
-                                    </label>
-                                    <select 
-                                      value={editingGameTeamA} 
-                                      onChange={(e) => handleEditingGameTeamAChange(e.target.value)}
-                                      className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-lg p-2 outline-none text-white text-xs font-bold w-full cursor-pointer"
-                                    >
-                                      <option value="">-- Selecciona Equipo A --</option>
-                                      {uniqueTeams.map(team => (
-                                        <option key={team} value={team}>{team}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                  <div className="flex flex-col">
-                                    <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1">
-                                      {lang === 'en' ? 'Team B (Visitor)' : 'Equipo B (Visitante)'}
-                                    </label>
-                                    <select 
-                                      value={editingGameTeamB} 
-                                      onChange={(e) => handleEditingGameTeamBChange(e.target.value)}
-                                      className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-lg p-2 outline-none text-white text-xs font-bold w-full cursor-pointer"
-                                    >
-                                      <option value="">-- Selecciona Equipo B --</option>
-                                      {uniqueTeams.map(team => (
-                                        <option key={team} value={team}>{team}</option>
-                                      ))}
-                                    </select>
-                                  </div>
-                                </div>
-
                                 <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                                   {/* Fecha */}
                                   <div className="flex flex-col justify-center">
@@ -1982,14 +1724,14 @@ export default function Home() {
 
                                   {/* Scores de Equipos */}
                                   <div className="md:col-span-2 grid grid-cols-2 gap-3">
-                                    {[editingGameTeamA, editingGameTeamB].filter(Boolean).map((teamName) => (
+                                    {Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean).map((teamName) => (
                                       <div key={teamName} className="flex flex-col justify-center">
                                         <label className="block text-[10px] font-bold uppercase tracking-wider text-gray-400 mb-1 truncate">
                                           {lang === 'en' ? `Points ${teamName}` : `Puntos ${teamName}`}
                                         </label>
                                         <input 
                                           type="number" 
-                                          value={editingGameScores[teamName] ?? ""} 
+                                          value={editingGameScores[teamName] ?? 0} 
                                           onChange={(e) => {
                                             const val = e.target.value === "" ? "" : Number(e.target.value);
                                             setEditingGameScores(prev => ({ ...prev, [teamName]: val }));
@@ -2009,7 +1751,7 @@ export default function Home() {
                                     {lang === 'en' ? 'Winner:' : 'Ganador:'}
                                   </span>
                                   <div className="flex items-center gap-2">
-                                    {[editingGameTeamA, editingGameTeamB].filter(Boolean).map((teamName) => (
+                                    {Array.from(new Set(editingGameData.map(p => p.team))).filter(Boolean).map((teamName) => (
                                       <button
                                         key={teamName}
                                         onClick={() => handleEditingWinnerChange(teamName)}
@@ -2091,8 +1833,7 @@ export default function Home() {
                                             onChange={(e) => handlePendingDataChange(idx, 'team', e.target.value)}
                                             className="bg-black/50 border border-white/10 text-white rounded-lg p-1.5 text-xs font-bold outline-none focus:border-bsn-neon w-32"
                                           >
-                                            <option value="">-- Selecciona --</option>
-                                            {[editingGameTeamA, editingGameTeamB].filter(Boolean).map(t => (
+                                            {uniqueTeams.map(t => (
                                               <option key={t} value={t}>{t}</option>
                                             ))}
                                           </select>
@@ -2448,40 +2189,6 @@ export default function Home() {
                       </label>
                     </div>
 
-                    {/* Selectores de Equipos */}
-                    <div className="grid grid-cols-2 gap-4 border-b border-white/5 pb-4">
-                      <div className="flex flex-col">
-                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
-                          {lang === 'en' ? 'Team A (Home)' : 'Equipo A (Local)'}
-                        </label>
-                        <select 
-                          value={gameTeamA} 
-                          onChange={(e) => handleGameTeamAChange(e.target.value)}
-                          className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-xl p-2.5 outline-none text-white text-xs font-bold w-full cursor-pointer"
-                        >
-                          <option value="">-- Selecciona Equipo A --</option>
-                          {uniqueTeams.map(team => (
-                            <option key={team} value={team}>{team}</option>
-                          ))}
-                        </select>
-                      </div>
-                      <div className="flex flex-col">
-                        <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5">
-                          {lang === 'en' ? 'Team B (Visitor)' : 'Equipo B (Visitante)'}
-                        </label>
-                        <select 
-                          value={gameTeamB} 
-                          onChange={(e) => handleGameTeamBChange(e.target.value)}
-                          className="bg-black/60 border border-white/10 focus:border-bsn-neon rounded-xl p-2.5 outline-none text-white text-xs font-bold w-full cursor-pointer"
-                        >
-                          <option value="">-- Selecciona Equipo B --</option>
-                          {uniqueTeams.map(team => (
-                            <option key={team} value={team}>{team}</option>
-                          ))}
-                        </select>
-                      </div>
-                    </div>
-
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
                       {/* Fecha */}
                       <div className="flex flex-col justify-center">
@@ -2498,14 +2205,14 @@ export default function Home() {
 
                       {/* Scores de Equipos */}
                       <div className="md:col-span-2 grid grid-cols-2 gap-4">
-                        {[gameTeamA, gameTeamB].filter(Boolean).map((teamName) => (
+                        {Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean).map((teamName) => (
                           <div key={teamName} className="flex flex-col justify-center">
                             <label className="block text-xs font-bold uppercase tracking-wider text-gray-400 mb-1.5 truncate">
                               {lang === 'en' ? `Points ${teamName}` : `Puntos ${teamName}`}
                             </label>
                             <input 
                               type="number" 
-                              value={customScores[teamName] ?? ""} 
+                              value={customScores[teamName] ?? 0} 
                               onChange={(e) => {
                                 const val = e.target.value === "" ? "" : Number(e.target.value);
                                 setCustomScores(prev => ({ ...prev, [teamName]: val }));
@@ -2525,7 +2232,7 @@ export default function Home() {
                         {lang === 'en' ? 'Winner:' : 'Ganador del Juego:'}
                       </span>
                       <div className="flex items-center gap-2">
-                        {[gameTeamA, gameTeamB].filter(Boolean).map((teamName) => (
+                        {Array.from(new Set(scannedData.map(p => p.team))).filter(Boolean).map((teamName) => (
                           <button
                             key={teamName}
                             onClick={() => handleWinnerChange(teamName)}
@@ -2661,8 +2368,7 @@ export default function Home() {
                                 onChange={(e) => handleDataChange(player.id, 'team', e.target.value)}
                                 className={`bg-black/40 border text-white rounded-lg p-2 text-xs font-bold outline-none focus:border-bsn-neon w-36 ${isTeamEdited ? 'border-amber-500 text-amber-300 bg-amber-500/5' : 'border-white/10'}`}
                               >
-                                <option value="">-- Selecciona --</option>
-                                {[gameTeamA, gameTeamB].filter(Boolean).map(team => (
+                                {uniqueTeams.map(team => (
                                   <option key={team} value={team}>{team}</option>
                                 ))}
                               </select>

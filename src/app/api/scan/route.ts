@@ -40,7 +40,7 @@ export async function POST(req: NextRequest) {
     if (teams && Array.isArray(teams) && teams.length > 0) {
       teamsContext = `\n\nEXPECTED TEAMS:\n` +
         teams.map((t: any) => `- "${t}"`).join("\n") +
-        `\n\nAssign each transcribed player to one of these expected teams based on which section/header of the box score they belong to. You MUST map the team to one of the exact names in this EXPECTED TEAMS list. Do NOT return "Home", "Away", "Visitor", or any other name not in this list.`;
+        `\n\nAssign each transcribed player to one of these expected teams based on which section/header of the box score they belong to.`;
     }
 
     const response = await openai.chat.completions.create({
@@ -53,12 +53,11 @@ Your objective is to read the attached scoreboard image and transcribe statistic
 
 CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
 1. Locate the Column Header Row:
-   Identify the horizontal row containing column headers (e.g., GRD, PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA).
-   Note: There is NO header text for the Player/Username column; player names (gamer tags) are located on the far left of each row, next to the platform/avatar icons, to the left of the GRD column.
+   Identify the horizontal row containing column headers. Look specifically for columns: PLAYER (or Player/Username), PTS, REB, AST, STL, BLK, FGM/FGA (or FG M/A), and 3PM/3PA (or 3P M/A).
    
 2. Establish Exact Horizontal Coordinates (X-axis Calibration):
-   Determine the exact horizontal coordinate (or center line) of each of these columns:
-   - PLAYER (the region on the far left containing the player gamer tags, to the left of the GRD column)
+   Determine the exact horizontal coordinate (or center line) of each of these headers:
+   - PLAYER
    - PTS
    - REB
    - AST
@@ -69,18 +68,14 @@ CRITICAL STEPS FOR PRECISE TRANSCRIPTION (SPATIAL HEADER MATCHING):
 
 3. Read Stats Vertically (Y-axis Lineup Scan):
    For every player row in the scoreboard:
-   - For the PLAYER column (gamer tags on the far left), extract the PlayStation/Xbox gamer ID (username) precisely as text. This column must NEVER be left empty or null unless the row is completely blank. Be very thorough in transcribing the exact spelling, case, and special characters (underscores, hyphens, numbers) of each username.
-   - For each statistic (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA), look directly vertically downwards from that column's X-axis position. Extract ONLY the number or fraction that falls directly inside that column's vertical alignment slice.
-   - **PREFER EMPTY OVER GUESSING / SHIFTING for numeric stats**: If a cell under a numeric header (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA) is blank, unreadable, or missing, do NOT shift numbers from adjacent columns to fill the gap. Set that field to null. (However, as stated above, you must always transcribe the PLAYER username text).
+   - Extract the Playstation/Xbox gamer ID in the Player/Username column.
+   - For each statistic (PTS, REB, AST, STL, BLK, FGM/FGA, 3PM/3PA), look directly vertically downwards from that header's X-axis position. Extract ONLY the number or fraction that falls directly inside that column's vertical alignment slice.
+   - **PREFER EMPTY OVER GUESSING / SHIFTING**: If a cell under a header is blank, unreadable, or missing, do NOT shift numbers from adjacent columns to fill the gap. Set that field to null.
    - If there is any doubt about which column a number belongs to, set it to null and set the flag "low_confidence": true for that player.
    - Completely ignore and discard all other columns like GRD, FOULS, TO, FTM/FTA, team total rows, score overlays, and background details.
 
 4. Identify Teams:
-   - Assign each player to their correct team name.
-   - You MUST assign each player to one of the EXPECTED TEAMS exactly as spelled. Do NOT use names like "Home", "Away", or custom variations.
-   - If the team headers (e.g. team name text or logos) are visible above their respective table section, map it to the corresponding expected team.
-   - If team headers are NOT visible in the image (e.g. if the image is cropped or only shows the box score rows), look at the EXPECTED ROSTER PLAYERS list to see which team the player belongs to (for example, if you match the player to "BubaluRD-_-023", assign them to team "Criollos").
-   - If a player is not in the expected roster, assign them to the same team as the other players in their 5-player section.
+   Assign each player to their correct team name based on the team header above their table section.
 
 ${rosterContext}${teamsContext}
 

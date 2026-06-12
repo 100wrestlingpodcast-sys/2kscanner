@@ -277,92 +277,9 @@ export async function POST(req: NextRequest) {
             dateStr = targetDate;
           }
         } else {
-          // Si no encontramos el partido, autogeneramos un nuevo ID y lo añadimos a Resultados_Input
-          let maxId = 0;
-          for (let i = 0; i < inputRows.length; i++) {
-            const row = inputRows[i];
-            const gId = row[0];
-            if (gId && gId.startsWith("BSN")) {
-              const num = parseInt(gId.replace("BSN", ""), 10);
-              if (!isNaN(num) && num > maxId) {
-                maxId = num;
-              }
-            }
-          }
-          
-          if (idRows && idRows.length > 1) {
-            idRows.slice(1).forEach(row => {
-              const gId = row[0];
-              if (gId && gId.startsWith("BSN")) {
-                const num = parseInt(gId.replace("BSN", ""), 10);
-                if (!isNaN(num) && num > maxId) {
-                  maxId = num;
-                }
-              }
-            });
-          }
-
-          const nextIdVal = maxId + 1;
-          const newGameId = `BSN${String(nextIdVal).padStart(3, "0")}`;
-          finalGameId = newGameId;
-
-          // Obtener los nombres exactos de los equipos en mayúsculas/minúsculas correctas
-          const uniqueTeamsInPayload = Array.from(new Set(data.map((p: any) => p.team)));
-          const homeTeamName = uniqueTeamsInPayload[0] || "Local";
-          const awayTeamName = uniqueTeamsInPayload[1] || "Visitante";
-
-          let homeScore = 0;
-          let awayScore = 0;
-
-          const homeName = String(homeTeamName).toLowerCase().trim();
-          const awayName = String(awayTeamName).toLowerCase().trim();
-
-          for (const [tName, val] of Object.entries(scores || {})) {
-            const normTName = tName.toLowerCase().trim();
-            if (normTName.includes(homeName) || homeName.includes(normTName)) {
-              homeScore = Number(val);
-            }
-            if (normTName.includes(awayName) || awayName.includes(normTName)) {
-              awayScore = Number(val);
-            }
-          }
-
-          if (isForfeit) {
-            const normWinnerName = String(winner).toLowerCase().trim();
-            if (normWinnerName.includes(homeName) || homeName.includes(normWinnerName)) {
-              homeScore = 20;
-              awayScore = 0;
-            } else {
-              homeScore = 0;
-              awayScore = 20;
-            }
-          }
-
-          const targetSemana = semana && semana !== "Actual" ? semana : "Semana 12"; // Fallback por defecto si no viene semana o es Actual
-          const targetDate = fecha || dateStr;
-
-          const newRow = [
-            newGameId,
-            targetSemana,
-            targetDate,
-            homeTeamName,
-            awayTeamName,
-            isForfeit ? homeScore : (homeScore || 0),
-            isForfeit ? awayScore : (awayScore || 0),
-            winner || "",
-            isForfeit ? "forfeit" : "Autogenerado"
-          ];
-
-          await sheets.spreadsheets.values.append({
-            spreadsheetId: SPREADSHEET_ID,
-            range: "Resultados_Input!A:I",
-            valueInputOption: "USER_ENTERED",
-            requestBody: {
-              values: [newRow]
-            }
-          });
-
-          dateStr = targetDate;
+          return NextResponse.json({ 
+            error: `No se encontró ningún juego registrado para ${scannedTeams.join(" vs ")} ${semana !== "Actual" ? `en la "${semana}"` : ""} en la pestaña Resultados_Input. Por favor verifica que los nombres de los equipos coincidan con el calendario.` 
+          }, { status: 404 });
         }
 
       } catch (err: any) {
@@ -449,7 +366,7 @@ export async function POST(req: NextRequest) {
 
       if (rows && rows.length > 3) {
         data.forEach((p: any) => {
-          if (!p.nameMatched) return;
+          if (!p.username) return;
 
           // Buscar en qué fila está (ignorando mayúsculas)
           const rowIndex = rows.findIndex((r) => r[1] && r[1].trim().toLowerCase() === p.username.trim().toLowerCase());
